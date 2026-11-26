@@ -1,0 +1,49 @@
+name: Bug Report
+description: Report a bug or unexpected behavior with Edifier M60 Desktop Control
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: input
+    id: app_version
+    attributes:
+      label: App Version
+      placeholder: e.g., v1.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - Windows 11
+        - Windows 10
+        - Linux (Ubuntu / Debian)
+        - Linux (Other)
+    validations:
+      required: true
+
+  - type: input
+    id: firmware
+    attributes:
+      label: Speaker Firmware (if known)
+      placeholder: e.g., 2.4.1
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce & expected behavior
+      description: What happened, and what did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Diagnostics BLE Frame Log / Error Output (optional)
+      description: Paste any relevant log lines from the Diagnostics panel (3-dot menu -> Diagnostics).
+      render: text
+    validations:
+      required: false

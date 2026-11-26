@@ -74,3 +74,12 @@ On Linux:
 ```bash
 bash installer/linux/build_linux.sh
 ```
+
+## Feature Requests & Bug Reports
+
+Have an idea for a new feature or ran into an issue?
+
+- **[Request a Feature](https://github.com/Droid567492/EdifierDesktop/issues/new?template=feature_request.yml)**
+- **[Report a Bug](https://github.com/Droid567492/EdifierDesktop/issues/new?template=bug_report.yml)**
+- **[Browse Existing Issues](https://github.com/Droid567492/EdifierDesktop/issues)**
+

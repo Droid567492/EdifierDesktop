@@ -1,0 +1,51 @@
+name: Feature Request
+description: Suggest a new feature or improvement for Edifier M60 Desktop Control
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary / Problem it solves
+      description: Briefly describe what you'd like to add and why it would be useful.
+      placeholder: e.g., Add keyboard shortcut presets for EQ switching...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: How should this feature work in the UI, tray, or backend?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Target platform
+      options:
+        - Both / All
+        - Windows
+        - Linux
+    validations:
+      required: true
+
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Connection type
+      options:
+        - Both / UI / General
+        - Bluetooth LE
+        - USB-C
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Any mockups, references, or hardware details (speaker firmware, OS, setup).
+    validations:
+      required: false
