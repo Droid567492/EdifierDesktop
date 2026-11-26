@@ -103,8 +103,79 @@ jobs:
             dist/edifier-m60-control_*_amd64.deb
             dist/edifier-m60-control-v*-linux-x86_64.tar.gz
 
+  build-linux-rpm:
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - name: Install Fedora build packages
+        run: |
+          dnf install -y git python3 python3-pip python3-devel nodejs npm rpm-build binutils gcc findutils tar gzip bluez gtk3
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create venv and install Python dependencies
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -r backend/requirements.txt pyinstaller
+
+      - name: Run backend unit & integration tests
+        run: .venv/bin/python -m pytest backend/tests -v
+
+      - name: Build native .rpm package
+        run: PYTHON="$PWD/.venv/bin/python" bash installer/linux/build_rpm.sh
+
+      - name: Smoke-test RPM install
+        run: |
+          dnf install -y ./dist/edifier-m60-control-*.x86_64.rpm
+          test -x /usr/bin/edifier-m60-control
+          test "$(cat /opt/edifier-m60-control/.install-method)" = "linux_rpm"
+
+      - name: Upload RPM release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-rpm-assets
+          path: dist/edifier-m60-control-*.x86_64.rpm
+
+  build-linux-arch:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install Arch build packages
+        run: |
+          pacman -Syu --noconfirm base-devel git python python-pip nodejs npm gtk3 bluez zstd binutils
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create venv and install Python dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -r backend/requirements.txt pyinstaller
+
+      - name: Run backend unit & integration tests
+        run: .venv/bin/python -m pytest backend/tests -v
+
+      - name: Build native Arch package
+        run: PYTHON="$PWD/.venv/bin/python" bash installer/linux/build_arch.sh
+
+      - name: Smoke-test Arch package install
+        run: |
+          pacman -Qip dist/edifier-m60-control-*-x86_64.pkg.tar.zst
+          pacman -U --noconfirm dist/edifier-m60-control-*-x86_64.pkg.tar.zst
+          test -x /usr/bin/edifier-m60-control
+          test "$(cat /opt/edifier-m60-control/.install-method)" = "linux_arch"
+
+      - name: Upload Arch release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-arch-assets
+          path: dist/edifier-m60-control-*-x86_64.pkg.tar.zst
+
   publish-release:
-    needs: [build-windows, build-linux]
+    needs: [build-windows, build-linux, build-linux-rpm, build-linux-arch]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -124,6 +195,8 @@ jobs:
             ### Downloads
             - **Windows Installer (`*-win64-setup.exe`)**: Recommended for Windows — installs shortcuts, uninstaller, and optional Start with Windows.
             - **Windows Portable (`*-win64-portable.exe`)**: Standalone portable Windows executable.
-            - **Linux Debian/Ubuntu (`*_amd64.deb`)**: Installs `edifier-m60-control` system-wide with desktop entry & icon (`sudo apt install ./edifier-m60-control_*.deb`).
+            - **Linux Debian/Ubuntu/Mint/Pop!_OS (`*_amd64.deb`)**: `sudo apt install ./edifier-m60-control_*_amd64.deb`
+            - **Linux Fedora/RHEL/openSUSE (`*.x86_64.rpm`)**: `sudo dnf install ./edifier-m60-control-*.x86_64.rpm` (openSUSE: `sudo zypper install --allow-unsigned-rpm ./edifier-m60-control-*.x86_64.rpm`)
+            - **Linux Arch/EndeavourOS/Manjaro/CachyOS (`*-x86_64.pkg.tar.zst`)**: `sudo pacman -U ./edifier-m60-control-*-x86_64.pkg.tar.zst`
             - **Linux Portable (`*-linux-x86_64.tar.gz`)**: Standalone bundle for any x86_64 Linux distro (includes `install.sh` / `uninstall.sh`).
           files: release-files/*

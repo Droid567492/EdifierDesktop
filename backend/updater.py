@@ -7,6 +7,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -55,9 +56,30 @@ def detect_install_mode() -> str:
         return "windows_portable"
     if sys.platform.startswith("linux"):
         if str(exe_path).startswith("/opt/edifier-m60-control"):
-            return "linux_deb"
+            return detect_linux_package_mode(exe_path.parent)
         return "linux_portable"
     return "portable"
+
+
+LINUX_PACKAGE_MODES = frozenset({"linux_deb", "linux_rpm", "linux_arch"})
+
+
+def detect_linux_package_mode(app_dir: Path) -> str:
+    """Return linux_deb / linux_rpm / linux_arch for a system-installed package."""
+    marker = app_dir / ".install-method"
+    try:
+        if marker.is_file():
+            value = marker.read_text(encoding="utf-8").strip()
+            if value in LINUX_PACKAGE_MODES:
+                return value
+    except OSError:
+        pass
+    has_dpkg = bool(shutil.which("dpkg"))
+    if shutil.which("pacman") and not has_dpkg:
+        return "linux_arch"
+    if (shutil.which("dnf") or shutil.which("zypper") or shutil.which("rpm")) and not has_dpkg:
+        return "linux_rpm"
+    return "linux_deb"
 
 
 def select_release_asset(
@@ -95,18 +117,27 @@ def select_release_asset(
         )
 
     if plat.startswith("linux"):
+
+        def _is_portable_tar(n: str) -> bool:
+            return n.endswith(".tar.gz") and ".pkg.tar." not in n
+
+        def _is_arch_pkg(n: str) -> bool:
+            return n.endswith(".pkg.tar.zst") or n.endswith(".pkg.tar.xz")
+
         if mode == "linux_deb":
-            return _find_matching(
-                [
-                    lambda n: n.endswith(".deb"),
-                    lambda n: n.endswith("linux-x86_64.tar.gz") or n.endswith(".tar.gz"),
-                ]
-            )
+            return _find_matching([lambda n: n.endswith(".deb"), _is_portable_tar])
+        if mode == "linux_rpm":
+            return _find_matching([lambda n: n.endswith(".rpm"), _is_portable_tar])
+        if mode == "linux_arch":
+            return _find_matching([_is_arch_pkg, _is_portable_tar])
         return _find_matching(
             [
-                lambda n: n.endswith("linux-x86_64.tar.gz") or ("linux" in n and n.endswith(".tar.gz")),
-                lambda n: n.endswith(".tar.gz"),
+                lambda n: n.endswith("linux-x86_64.tar.gz")
+                or ("linux" in n and _is_portable_tar(n)),
+                _is_portable_tar,
                 lambda n: n.endswith(".deb"),
+                lambda n: n.endswith(".rpm"),
+                _is_arch_pkg,
             ]
         )
 
@@ -357,9 +388,27 @@ class UpdateManager:
                     shutdown_cb()
                 return self.state.to_dict()
 
-            if mode == "linux_deb":
+            if mode in LINUX_PACKAGE_MODES:
+                if mode == "linux_rpm":
+                    if shutil.which("dnf"):
+                        cmd = ["pkexec", "dnf", "install", "-y", str(dest_file)]
+                    elif shutil.which("zypper"):
+                        cmd = [
+                            "pkexec",
+                            "zypper",
+                            "--non-interactive",
+                            "install",
+                            "--allow-unsigned-rpm",
+                            str(dest_file),
+                        ]
+                    else:
+                        cmd = ["pkexec", "rpm", "-Uvh", str(dest_file)]
+                elif mode == "linux_arch":
+                    cmd = ["pkexec", "pacman", "-U", "--noconfirm", str(dest_file)]
+                else:
+                    cmd = ["pkexec", "apt-get", "install", "-y", str(dest_file)]
                 proc = subprocess.Popen(
-                    ["pkexec", "apt-get", "install", "-y", str(dest_file)],
+                    cmd,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )

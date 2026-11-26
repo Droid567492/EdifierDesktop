@@ -92,13 +92,13 @@ const INITIAL_SETTINGS: AppSettings = {
   lock_usb_volume_on_sync: true,
   auto_check_updates: true,
   dismissed_alerts: [],
-  app_version: '1.2.0',
+  app_version: '1.3.0',
   platform: 'win32',
 }
 
 const INITIAL_UPDATE: UpdateState = {
   status: 'idle',
-  current_version: '1.2.0',
+  current_version: '1.3.0',
   latest_version: null,
   release_url: null,
   release_notes: null,
@@ -636,7 +636,7 @@ export default function App() {
 
       <footer className="app-footer">
         <span>
-          <strong className="mono">v{settings.app_version ?? '1.2.0'}</strong> •{' '}
+          <strong className="mono">v{settings.app_version ?? '1.3.0'}</strong> •{' '}
           <a href={updateState.repo_url} target="_blank" rel="noreferrer">
             GitHub Repository
           </a>

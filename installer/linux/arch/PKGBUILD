@@ -1,0 +1,40 @@
+# Maintainer: Droid567492 <Droid567492@users.noreply.github.com>
+# Binary package for Arch-based distros (Arch, EndeavourOS, Manjaro, CachyOS, ...).
+# Packages a pre-built PyInstaller bundle staged by installer/linux/build_arch.sh
+# (payload/ next to this PKGBUILD); pkgver is rewritten by that script.
+pkgname=edifier-m60-control
+pkgver=1.3.0
+pkgrel=1
+pkgdesc="Unofficial desktop controller for Edifier M60 / M90 speakers over BLE and USB-C (built using AI assistance)"
+arch=('x86_64')
+url="https://github.com/Droid567492/EdifierDesktop"
+license=('MIT')
+depends=('bluez' 'gtk3' 'glib2' 'glibc')
+optdepends=(
+  'pipewire-pulse: USB-C audio volume sync via pactl'
+  'pulseaudio-utils: USB-C audio volume sync via pactl'
+  'libayatana-appindicator: System tray AppIndicator support'
+  'chromium: App-window mode UI'
+)
+options=('!strip' '!debug')
+install=edifier-m60-control.install
+source=()
+
+package() {
+  local stage="${startdir}"
+
+  install -dm755 "${pkgdir}/opt/edifier-m60-control"
+  cp -a "${stage}/payload/." "${pkgdir}/opt/edifier-m60-control/"
+  printf 'linux_arch\n' > "${pkgdir}/opt/edifier-m60-control/.install-method"
+  chmod 755 "${pkgdir}/opt/edifier-m60-control/edifier-m60-control"
+
+  install -dm755 "${pkgdir}/usr/bin"
+  ln -sf /opt/edifier-m60-control/edifier-m60-control "${pkgdir}/usr/bin/edifier-m60-control"
+
+  install -Dm644 "${stage}/edifier-m60-control.desktop" \
+    "${pkgdir}/usr/share/applications/edifier-m60-control.desktop"
+  install -Dm644 "${stage}/edifier-m60-control.png" \
+    "${pkgdir}/usr/share/icons/hicolor/256x256/apps/edifier-m60-control.png"
+  install -Dm644 "${stage}/LICENSE" \
+    "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

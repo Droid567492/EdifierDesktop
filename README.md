@@ -51,9 +51,23 @@ Download the package for your OS from the [Releases](https://github.com/Droid567
 - **Portable (`EdifierM60Control-v*-win64-portable.exe`)**: Single portable `.exe` — run directly with no installation required.
 
 ### Linux (x86_64)
-- **Debian / Ubuntu (`edifier-m60-control_*_amd64.deb`)**:
+Native packages install to `/opt/edifier-m60-control` with a `/usr/bin/edifier-m60-control` launcher, desktop entry, and icon. Auto-update uses the same package format you installed.
+
+- **Debian / Ubuntu / Mint / Pop!_OS (`edifier-m60-control_*_amd64.deb`)**:
   ```bash
   sudo apt install ./edifier-m60-control_*_amd64.deb
+  ```
+- **Fedora / RHEL / Alma / Rocky (`edifier-m60-control-*.x86_64.rpm`)**:
+  ```bash
+  sudo dnf install ./edifier-m60-control-*.x86_64.rpm
+  ```
+  **openSUSE**:
+  ```bash
+  sudo zypper install --allow-unsigned-rpm ./edifier-m60-control-*.x86_64.rpm
+  ```
+- **Arch / EndeavourOS / Manjaro / CachyOS (`edifier-m60-control-*-x86_64.pkg.tar.zst`)**:
+  ```bash
+  sudo pacman -U ./edifier-m60-control-*-x86_64.pkg.tar.zst
   ```
 - **Portable Archive (`edifier-m60-control-v*-linux-x86_64.tar.gz`)**:
   ```bash
@@ -85,8 +99,11 @@ Over **USB-C** (Edifier USB VID `0x2D99`, e.g. `PID 0xA094` on M60), the speaker
 
 On Linux:
 ```bash
-bash installer/linux/build_linux.sh
+bash installer/linux/build_linux.sh   # .deb + portable .tar.gz (Debian/Ubuntu host, needs dpkg-deb)
+bash installer/linux/build_rpm.sh     # .rpm (Fedora/openSUSE host, needs rpm-build)
+bash installer/linux/build_arch.sh    # .pkg.tar.zst (Arch host, needs base-devel/makepkg)
 ```
+Set `PYTHON=/path/to/venv/bin/python` to build with a virtual environment.
 
 ## Feature Requests & Bug Reports
 

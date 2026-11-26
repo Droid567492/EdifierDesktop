@@ -2,3 +2,9 @@
 *.sh text eol=lf
 *.desktop text eol=lf
 *.yml text eol=lf
+installer/linux/** text eol=lf
+PKGBUILD text eol=lf
+*.spec text eol=lf
+*.install text eol=lf
+*.png binary
+*.ico binary

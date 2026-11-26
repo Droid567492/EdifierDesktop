@@ -4,7 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
-APP_VERSION="$(python3 -c "from backend.version import APP_VERSION; print(APP_VERSION)")"
+PYTHON_BIN="${PYTHON:-python3}"
+APP_VERSION="$("${PYTHON_BIN}" -c "from backend.version import APP_VERSION; print(APP_VERSION)")"
 echo "==> Building Edifier M60 / M90 Studio Control v${APP_VERSION} for Linux (x86_64)"
 
 echo "[1/5] Building frontend bundle..."
@@ -15,10 +16,10 @@ popd >/dev/null
 
 echo "[2/5] Generating PNG icon..."
 mkdir -p build dist
-python3 -c "from pathlib import Path; from backend.icon import get_icon_png_bytes; Path('build/edifier-m60-control.png').write_bytes(get_icon_png_bytes(256))"
+"${PYTHON_BIN}" -c "from pathlib import Path; from backend.icon import get_icon_png_bytes; Path('build/edifier-m60-control.png').write_bytes(get_icon_png_bytes(256))"
 
 echo "[3/5] Running PyInstaller (--onedir)..."
-python3 -m PyInstaller \
+"${PYTHON_BIN}" -m PyInstaller \
   --noconfirm \
   --clean \
   --onedir \
@@ -46,6 +47,7 @@ mkdir -p \
   "${DEB_ROOT}/usr/share/icons/hicolor/256x256/apps"
 
 cp -a dist/edifier-m60-control/. "${DEB_ROOT}/opt/edifier-m60-control/"
+printf 'linux_deb\n' > "${DEB_ROOT}/opt/edifier-m60-control/.install-method"
 ln -sf /opt/edifier-m60-control/edifier-m60-control "${DEB_ROOT}/usr/bin/edifier-m60-control"
 cp installer/linux/edifier-m60-control.desktop "${DEB_ROOT}/usr/share/applications/edifier-m60-control.desktop"
 cp build/edifier-m60-control.png "${DEB_ROOT}/usr/share/icons/hicolor/256x256/apps/edifier-m60-control.png"

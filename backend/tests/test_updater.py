@@ -7,6 +7,7 @@ import pytest
 
 from backend.updater import (
     UpdateManager,
+    detect_linux_package_mode,
     is_newer_version,
     parse_version,
     select_release_asset,
@@ -26,13 +27,51 @@ def test_asset_selection_windows_and_linux() -> None:
         {"name": "EdifierM60Control-v1.2.0-win64-setup.exe", "browser_download_url": "u1"},
         {"name": "EdifierM60Control-v1.2.0-win64-portable.exe", "browser_download_url": "u2"},
         {"name": "edifier-m60-control_1.2.0_amd64.deb", "browser_download_url": "u3"},
+        {"name": "edifier-m60-control-1.2.0-1-x86_64.pkg.tar.zst", "browser_download_url": "u6"},
         {"name": "edifier-m60-control-v1.2.0-linux-x86_64.tar.gz", "browser_download_url": "u4"},
+        {"name": "edifier-m60-control-1.2.0-1.x86_64.rpm", "browser_download_url": "u5"},
     ]
 
     assert select_release_asset(assets, "win32", "windows_installer")["name"].endswith("setup.exe")
     assert select_release_asset(assets, "win32", "windows_portable")["name"].endswith("portable.exe")
-    assert select_release_asset(assets, "linux", "linux_deb")["name"].endswith(".deb")
-    assert select_release_asset(assets, "linux", "linux_portable")["name"].endswith(".tar.gz")
+    assert select_release_asset(assets, "linux", "linux_deb")["name"] == "edifier-m60-control_1.2.0_amd64.deb"
+    assert select_release_asset(assets, "linux", "linux_rpm")["name"] == "edifier-m60-control-1.2.0-1.x86_64.rpm"
+    assert (
+        select_release_asset(assets, "linux", "linux_arch")["name"]
+        == "edifier-m60-control-1.2.0-1-x86_64.pkg.tar.zst"
+    )
+    # Portable must never pick the Arch .pkg.tar.zst even though it contains ".tar."
+    assert (
+        select_release_asset(assets, "linux", "linux_portable")["name"]
+        == "edifier-m60-control-v1.2.0-linux-x86_64.tar.gz"
+    )
+
+    # Fallback to portable when a native package is missing from a release
+    only_portable = [a for a in assets if a["name"].endswith("linux-x86_64.tar.gz")]
+    for mode in ("linux_deb", "linux_rpm", "linux_arch"):
+        assert select_release_asset(only_portable, "linux", mode)["name"].endswith(
+            "linux-x86_64.tar.gz"
+        )
+
+
+def test_detect_install_mode_linux_markers(tmp_path, monkeypatch) -> None:
+    for mode in ("linux_deb", "linux_rpm", "linux_arch"):
+        (tmp_path / ".install-method").write_text(f"{mode}\n", encoding="utf-8")
+        assert detect_linux_package_mode(tmp_path) == mode
+
+    # Without a marker, fall back to the available package manager
+    (tmp_path / ".install-method").unlink()
+    import backend.updater as upd
+
+    def fake_which(tools: set[str]):
+        return lambda name: f"/usr/bin/{name}" if name in tools else None
+
+    monkeypatch.setattr(upd.shutil, "which", fake_which({"pacman"}))
+    assert detect_linux_package_mode(tmp_path) == "linux_arch"
+    monkeypatch.setattr(upd.shutil, "which", fake_which({"dnf", "rpm"}))
+    assert detect_linux_package_mode(tmp_path) == "linux_rpm"
+    monkeypatch.setattr(upd.shutil, "which", fake_which({"dpkg", "apt-get"}))
+    assert detect_linux_package_mode(tmp_path) == "linux_deb"
 
 
 @pytest.mark.asyncio

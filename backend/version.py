@@ -1,6 +1,6 @@
 """Application version and GitHub release metadata."""
 
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 GITHUB_OWNER = "Droid567492"
 GITHUB_REPO = "EdifierDesktop"
 PROJECT_NAME = "Edifier M60 / M90 Desktop Control"
