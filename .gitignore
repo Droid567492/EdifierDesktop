@@ -1,0 +1,20 @@
+# Python / venv
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Node / frontend build
+frontend/node_modules/
+frontend/dist/
+
+# PyInstaller / release artifacts
+build/
+dist/
+*.spec
+
+# Local runtime config & IDE
+data/
+.vscode/
+.idea/
