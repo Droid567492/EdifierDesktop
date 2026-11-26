@@ -14,9 +14,11 @@ from bleak import BleakClient, BleakScanner
 from .protocol import (
     CONNEX_ADVERTISING_SERVICE_UUID,
     M60_GATT_SERVICE_UUID,
+    M60_INPUT_GROUP,
     M60_NOTIFY_CHAR_UUID,
     M60_WRITE_CHAR_UUID,
     MAX_VOLUME,
+    VALID_ALL_HEADERS,
     CustomEqState,
     EqBand,
     EqPreset,
@@ -143,12 +145,15 @@ class M60Controller:
         self.state = SpeakerState()
         self._client: BleakClient | None = None
         self._sim: SimulatedM60Device | None = None
-        self._reassembler = FrameReassembler()
+        self._reassembler = FrameReassembler(allowed_headers=VALID_ALL_HEADERS)
         self._cmd_lock = asyncio.Lock()
         self._pending: dict[int, asyncio.Future[Frame]] = {}
         self._frame_logs: deque[dict[str, Any]] = deque(maxlen=200)
         self._listeners: set[EventCallback] = set()
         self._settle_task: asyncio.Task[None] | None = None
+        self._poll_task: asyncio.Task[None] | None = None
+        self._poll_cycle: int = 0
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def add_listener(self, cb: EventCallback) -> None:
         self._listeners.add(cb)
@@ -250,6 +255,7 @@ class M60Controller:
         await self._emit_state()
 
         loop = asyncio.get_running_loop()
+        self._loop = loop
 
         def on_disconnected(_client: BleakClient) -> None:
             loop.call_soon_threadsafe(
@@ -289,6 +295,8 @@ class M60Controller:
             self.state.notice = "Connected over BLE."
             await self._emit_state()
             await self.refresh_all()
+            self._poll_cycle = 0
+            self._poll_task = asyncio.create_task(self._poll_loop())
             return self.state.to_dict()
         except Exception as exc:
             try:
@@ -305,6 +313,9 @@ class M60Controller:
             raise
 
     async def disconnect(self) -> dict[str, Any]:
+        if self._poll_task and not self._poll_task.done():
+            self._poll_task.cancel()
+        self._poll_task = None
         if self._settle_task and not self._settle_task.done():
             self._settle_task.cancel()
         self._cancel_all_pending()
@@ -330,6 +341,9 @@ class M60Controller:
     async def _handle_unexpected_disconnect(self) -> None:
         if self._client is None and not self.state.connected:
             return
+        if self._poll_task and not self._poll_task.done():
+            self._poll_task.cancel()
+        self._poll_task = None
         self._client = None
         self._cancel_all_pending()
         self.state.connected = False
@@ -350,20 +364,45 @@ class M60Controller:
     # Low-Level Transport & Frame Dispatch
     # ------------------------------------------------------------------
 
+    def _schedule_coro(self, coro: Any) -> None:
+        try:
+            running = asyncio.get_running_loop()
+            running.create_task(coro)
+            return
+        except RuntimeError:
+            pass
+        if self._loop is not None and not self._loop.is_closed():
+            self._loop.call_soon_threadsafe(lambda: asyncio.create_task(coro))
+
     def _on_ble_notify(self, _sender: Any, data: bytearray) -> None:
-        frames = self._reassembler.feed(bytes(data))
+        raw = bytes(data)
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if self._loop is not None and running is not self._loop and not self._loop.is_closed():
+            self._loop.call_soon_threadsafe(self._handle_notify_bytes, raw)
+            return
+        self._handle_notify_bytes(raw)
+
+    def _handle_notify_bytes(self, raw: bytes) -> None:
+        frames = self._reassembler.feed(raw)
         for frame in frames:
             self._process_incoming_frame(frame)
 
     def _process_incoming_frame(self, frame: Frame) -> None:
         entry = self._record_log("RX", frame.raw, describe_frame(frame))
-        asyncio.create_task(self._emit("frame_log", entry))
-        self._apply_frame_to_state(frame)
+        self._schedule_coro(self._emit("frame_log", entry))
+        before = self.state.to_dict()
+        is_unsolicited = frame.opcode not in self._pending
+        self._apply_frame_to_state(frame, unsolicited=is_unsolicited)
         fut = self._pending.pop(frame.opcode, None)
         if fut is not None and not fut.done():
             fut.set_result(frame)
+        elif self.state.to_dict() != before:
+            self._schedule_coro(self._emit_state())
 
-    def _apply_frame_to_state(self, frame: Frame) -> None:
+    def _apply_frame_to_state(self, frame: Frame, unsolicited: bool = False) -> None:
         op = frame.opcode
         p = frame.payload
         try:
@@ -375,14 +414,22 @@ class M60Controller:
                 self.state.classic_mac = decode_classic_mac(p)
             elif op == Opcode.QUERY_CAPABILITIES and p:
                 self.state.capabilities = decode_capabilities(p)
-            elif op == Opcode.QUERY_INPUT and p:
+            elif op in (Opcode.QUERY_INPUT, Opcode.SET_INPUT) and len(p) >= 2 and p[0] == M60_INPUT_GROUP:
                 self.state.input_source = decode_input(p).label
-            elif op in (Opcode.QUERY_VOLUME, Opcode.SET_VOLUME) and len(p) >= 2:
-                max_v, cur_v = decode_volume(p)
-                self.state.max_volume = max_v or MAX_VOLUME
-                self.state.volume = cur_v
+            elif op in (Opcode.QUERY_VOLUME, Opcode.SET_VOLUME):
+                if len(p) >= 2:
+                    max_v, cur_v = decode_volume(p)
+                    self.state.max_volume = max_v or MAX_VOLUME
+                    self.state.volume = cur_v
+                elif unsolicited and len(p) == 1 and 0 <= p[0] <= self.state.max_volume:
+                    self.state.volume = int(p[0])
             elif op == Opcode.QUERY_EQ_PRESET and p:
                 self.state.eq_preset = decode_eq_preset(p).label
+            elif op == Opcode.SET_EQ_PRESET and unsolicited and len(p) == 1:
+                try:
+                    self.state.eq_preset = decode_eq_preset(p).label
+                except ValueError:
+                    pass
             elif op == Opcode.QUERY_CUSTOM_EQ and len(p) >= 2:
                 self.state.custom_eq = decode_custom_eq(p)
             elif op == Opcode.QUERY_LDAC and p:
@@ -405,25 +452,31 @@ class M60Controller:
             logger.debug("Could not decode frame opcode 0x%02X", op, exc_info=True)
 
     async def _send_frame(
-        self, raw_frame: bytes, expect_reply: bool = True, timeout: float = 4.0
+        self,
+        raw_frame: bytes,
+        expect_reply: bool = True,
+        timeout: float = 4.0,
+        log_frame: bool = True,
     ) -> Frame | None:
         if not self.state.connected:
             raise RuntimeError("Speaker is not connected over BLE.")
 
         req = parse_frame(raw_frame)
         async with self._cmd_lock:
-            log_entry = self._record_log("TX", raw_frame, describe_frame(req))
-            await self._emit("frame_log", log_entry)
+            if log_frame:
+                log_entry = self._record_log("TX", raw_frame, describe_frame(req))
+                await self._emit("frame_log", log_entry)
 
             if self.state.demo_mode and self._sim is not None:
                 replies = self._sim.handle_request(raw_frame)
                 last_frame: Frame | None = None
                 for reply_bytes in replies:
                     for frame in self._reassembler.feed(reply_bytes):
-                        rx_entry = self._record_log(
-                            "RX", frame.raw, describe_frame(frame)
-                        )
-                        await self._emit("frame_log", rx_entry)
+                        if log_frame:
+                            rx_entry = self._record_log(
+                                "RX", frame.raw, describe_frame(frame)
+                            )
+                            await self._emit("frame_log", rx_entry)
                         self._apply_frame_to_state(frame)
                         last_frame = frame
                 return last_frame
@@ -485,6 +538,50 @@ class M60Controller:
                 logger.warning("Query failed (%s): %s", q.hex(" ").upper(), exc)
         await self._emit_state()
         return self.state.to_dict()
+
+    async def sync_fast_state(self) -> bool:
+        """Poll fast-changing speaker registers to catch physical button changes."""
+        if (
+            not self.state.connected
+            or self.state.input_settling
+            or self._cmd_lock.locked()
+        ):
+            return False
+
+        before = self.state.to_dict()
+        queries = [
+            cmd_query_volume(),
+            cmd_query_input(),
+            cmd_query_eq_preset(),
+            cmd_query_audio_decoding(),
+        ]
+        if self._poll_cycle % 5 == 0:
+            queries.extend([cmd_query_smart_light(), cmd_query_a2dp_state()])
+        self._poll_cycle += 1
+
+        for q in queries:
+            if not self.state.connected:
+                return False
+            try:
+                await self._send_frame(
+                    q, expect_reply=True, timeout=2.0, log_frame=False
+                )
+            except Exception:
+                logger.debug("Background sync query failed", exc_info=True)
+
+        if self.state.to_dict() != before:
+            await self._emit_state()
+            return True
+        return False
+
+    async def _poll_loop(self) -> None:
+        try:
+            while self.state.connected and not self.state.demo_mode:
+                await asyncio.sleep(2.0)
+                if self.state.connected and not self.state.demo_mode:
+                    await self.sync_fast_state()
+        except asyncio.CancelledError:
+            pass
 
     async def set_volume(self, level: int) -> dict[str, Any]:
         clamped = max(0, min(MAX_VOLUME, int(level)))

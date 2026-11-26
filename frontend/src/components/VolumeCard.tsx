@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Keyboard, Lock, Minus, Plus, Usb, Volume2, VolumeX } from 'lucide-react'
 import type { AppSettings, BleState, UsbState } from '../types'
 
@@ -26,9 +26,12 @@ export function VolumeCard({
   const [draftVol, setDraftVol] = useState(ble.volume)
   const [draftUsbVol, setDraftUsbVol] = useState(usb.volume_percent ?? 100)
   const [prevNonZero, setPrevNonZero] = useState(8)
+  const draggingVolRef = useRef(false)
 
   useEffect(() => {
-    setDraftVol(ble.volume)
+    if (!draggingVolRef.current) {
+      setDraftVol(ble.volume)
+    }
     if (ble.volume > 0) setPrevNonZero(ble.volume)
   }, [ble.volume])
 
@@ -110,9 +113,25 @@ export function VolumeCard({
         step={1}
         disabled={disabled}
         value={draftVol}
+        onPointerDown={() => {
+          draggingVolRef.current = true
+        }}
+        onPointerUp={() => {
+          draggingVolRef.current = false
+          onSetVolume(draftVol)
+        }}
+        onPointerCancel={() => {
+          draggingVolRef.current = false
+        }}
         onChange={(e) => setDraftVol(Number(e.target.value))}
-        onMouseUp={() => onSetVolume(draftVol)}
-        onTouchEnd={() => onSetVolume(draftVol)}
+        onMouseUp={() => {
+          draggingVolRef.current = false
+          onSetVolume(draftVol)
+        }}
+        onTouchEnd={() => {
+          draggingVolRef.current = false
+          onSetVolume(draftVol)
+        }}
         onKeyUp={() => onSetVolume(draftVol)}
       />
 
