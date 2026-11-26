@@ -93,6 +93,35 @@ export interface AppSettings {
   hotkey_error?: string | null
   autostart_enabled?: boolean
   autostart_error?: string | null
+  auto_check_updates?: boolean
+  dismissed_alerts?: string[]
+  app_version?: string
+  platform?: string
+}
+
+export interface UpdateState {
+  status:
+    | 'idle'
+    | 'checking'
+    | 'up_to_date'
+    | 'update_available'
+    | 'updating'
+    | 'updated'
+    | 'repo_moved'
+    | 'repo_not_found'
+    | 'error'
+  current_version: string
+  latest_version: string | null
+  release_url: string | null
+  release_notes: string | null
+  asset_name: string | null
+  asset_url: string | null
+  asset_size: number | null
+  install_mode: string
+  message: string | null
+  repo_url: string
+  repo_search_url: string
+  checked_at: string | null
 }
 
 export interface FrameLogEntry {
@@ -115,5 +144,6 @@ export interface AppSnapshot {
   usb_state: UsbState
   saved_eq_presets: SavedEqPreset[]
   settings: AppSettings
+  update_state?: UpdateState
   recent_logs: FrameLogEntry[]
 }

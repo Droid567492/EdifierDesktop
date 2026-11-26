@@ -20,6 +20,7 @@ from .hotkeys import WindowsVolumeHotkeyBridge
 from .icon import get_icon_ico_bytes, get_icon_png_bytes
 from .presets_store import PresetsStore
 from .protocol import ProtocolError
+from .updater import UpdateManager
 from .usb_audio import UsbAudioManager
 
 logger = logging.getLogger(__name__)
@@ -124,21 +125,35 @@ class AutostartRequest(BaseModel):
     enabled: bool
 
 
+class UpdateSettingRequest(BaseModel):
+    auto_check_updates: bool
+
+
+class AlertDismissRequest(BaseModel):
+    alert_id: str = Field(min_length=1, max_length=128)
+
+
 # ---------------------------------------------------------------------------
 # App Factory
 # ---------------------------------------------------------------------------
 
 
 class AppContext:
-    def __init__(self, store: PresetsStore | None = None) -> None:
+    def __init__(
+        self,
+        store: PresetsStore | None = None,
+        updater: UpdateManager | None = None,
+    ) -> None:
         self.store = store or PresetsStore()
         self.ble = M60Controller()
         self.usb = UsbAudioManager()
+        self.updater = updater or UpdateManager()
         self.hotkeys: WindowsVolumeHotkeyBridge | None = None
         self.ws_clients: set[WebSocket] = set()
         self._last_usb_snapshot: dict[str, Any] = {}
         self._saved_mute_restore_vol: int = 8
         self._usb_poll_task: asyncio.Task[None] | None = None
+        self._update_task: asyncio.Task[None] | None = None
 
     async def broadcast(self, event_type: str, data: dict[str, Any]) -> None:
         if not self.ws_clients:
@@ -153,19 +168,23 @@ class AppContext:
         for ws in stale:
             self.ws_clients.discard(ws)
 
-    async def full_snapshot(self) -> dict[str, Any]:
-        usb_state = await self.usb.get_status()
-        self._last_usb_snapshot = usb_state
+    def enriched_settings(self) -> dict[str, Any]:
         settings = self.store.get_settings()
         settings["hotkey_active"] = bool(self.hotkeys and self.hotkeys.active)
         settings["hotkey_error"] = self.hotkeys.last_error if self.hotkeys else None
         settings["autostart_enabled"] = is_autostart_enabled()
         settings["autostart_error"] = None
+        return settings
+
+    async def full_snapshot(self) -> dict[str, Any]:
+        usb_state = await self.usb.get_status()
+        self._last_usb_snapshot = usb_state
         return {
             "ble_state": self.ble.state.to_dict(),
             "usb_state": usb_state,
             "saved_eq_presets": self.store.list_eq_presets(),
-            "settings": settings,
+            "settings": self.enriched_settings(),
+            "update_state": self.updater.state.to_dict(),
             "recent_logs": self.ble.recent_logs(),
         }
 
@@ -204,8 +223,10 @@ def create_app(
     store: PresetsStore | None = None,
     enable_hotkeys: bool = True,
     static_dir: Path | None = None,
+    enable_auto_update_check: bool = True,
+    updater: UpdateManager | None = None,
 ) -> FastAPI:
-    ctx = AppContext(store=store)
+    ctx = AppContext(store=store, updater=updater)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -239,10 +260,29 @@ def create_app(
                     logger.debug("USB poll error", exc_info=True)
 
         ctx._usb_poll_task = asyncio.create_task(poll_usb())
+
+        async def startup_update_check() -> None:
+            try:
+                await asyncio.sleep(3.0)
+                if ctx.store.get_settings().get("auto_check_updates", True):
+                    state = await ctx.updater.check_for_updates()
+                    await ctx.broadcast("update_state", state)
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.debug("Startup update check error", exc_info=True)
+
+        if enable_auto_update_check and ctx.store.get_settings().get(
+            "auto_check_updates", True
+        ):
+            ctx._update_task = asyncio.create_task(startup_update_check())
+
         app.state.ctx = ctx
         try:
             yield
         finally:
+            if ctx._update_task:
+                ctx._update_task.cancel()
             if ctx._usb_poll_task:
                 ctx._usb_poll_task.cancel()
             if ctx.hotkeys:
@@ -488,11 +528,48 @@ def create_app(
     @app.post("/api/settings/autostart")
     async def set_autostart_setting(req: AutostartRequest) -> dict[str, Any]:
         result = set_autostart(req.enabled)
-        settings = ctx.store.get_settings()
-        settings["hotkey_active"] = bool(ctx.hotkeys and ctx.hotkeys.active)
-        settings["hotkey_error"] = ctx.hotkeys.last_error if ctx.hotkeys else None
+        settings = ctx.enriched_settings()
         settings["autostart_enabled"] = bool(result["enabled"])
         settings["autostart_error"] = result.get("error")
+        await ctx.broadcast("settings", settings)
+        return {"settings": settings}
+
+    @app.post("/api/settings/updates")
+    async def set_update_setting(req: UpdateSettingRequest) -> dict[str, Any]:
+        ctx.store.set_auto_check_updates(req.auto_check_updates)
+        settings = ctx.enriched_settings()
+        await ctx.broadcast("settings", settings)
+        return {"settings": settings}
+
+    @app.post("/api/updates/check")
+    async def check_updates_now() -> dict[str, Any]:
+        state = await ctx.updater.check_for_updates()
+        await ctx.broadcast("update_state", state)
+        return {"update_state": state}
+
+    @app.post("/api/updates/apply")
+    async def apply_update_now() -> dict[str, Any]:
+        def _shutdown() -> None:
+            cb = getattr(app.state, "request_shutdown", None)
+            if callable(cb):
+                loop = asyncio.get_running_loop()
+                loop.call_later(0.8, cb)
+
+        state = await ctx.updater.apply_update(shutdown_cb=_shutdown)
+        await ctx.broadcast("update_state", state)
+        return {"update_state": state}
+
+    @app.post("/api/settings/alerts/dismiss")
+    async def dismiss_alert_endpoint(req: AlertDismissRequest) -> dict[str, Any]:
+        ctx.store.dismiss_alert(req.alert_id)
+        settings = ctx.enriched_settings()
+        await ctx.broadcast("settings", settings)
+        return {"settings": settings}
+
+    @app.post("/api/settings/alerts/reset")
+    async def reset_alerts_endpoint() -> dict[str, Any]:
+        ctx.store.reset_dismissed_alerts()
+        settings = ctx.enriched_settings()
         await ctx.broadcast("settings", settings)
         return {"settings": settings}
 

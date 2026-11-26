@@ -1,37 +1,49 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   Activity,
+  BellOff,
   Bluetooth,
   BluetoothConnected,
   Cpu,
+  Download,
   MoreVertical,
   RefreshCw,
   Speaker,
   Usb,
 } from 'lucide-react'
-import type { BleState, UsbState } from '../types'
+import type { AppSettings, BleState, UpdateState, UsbState } from '../types'
 
 interface TopBarProps {
   ble: BleState
   usb: UsbState
+  settings: AppSettings
+  updateState: UpdateState
   wsConnected: boolean
   onOpenConnect: () => void
   onDisconnectBle: () => void
   onRefresh: () => void
   onToggleDemo: () => void
   onToggleDiagnostics: () => void
+  onToggleAutoCheckUpdates: (enabled: boolean) => void
+  onCheckUpdatesNow: () => void
+  onResetDismissedAlerts: () => void
   showDiagnostics: boolean
 }
 
 export function TopBar({
   ble,
   usb,
+  settings,
+  updateState,
   wsConnected,
   onOpenConnect,
   onDisconnectBle,
   onRefresh,
   onToggleDemo,
   onToggleDiagnostics,
+  onToggleAutoCheckUpdates,
+  onCheckUpdatesNow,
+  onResetDismissedAlerts,
   showDiagnostics,
 }: TopBarProps) {
   const [menuOpen, setMenuOpen] = useState(false)
@@ -59,7 +71,14 @@ export function TopBar({
     }
   }, [menuOpen])
 
-  const hasActiveMenuMode = ble.demo_mode || showDiagnostics
+  const autoUpdatesOn = settings.auto_check_updates !== false
+  const hasDismissedAlerts = (settings.dismissed_alerts?.length ?? 0) > 0
+  const hasMenuBadge =
+    ble.demo_mode ||
+    showDiagnostics ||
+    updateState.status === 'update_available' ||
+    updateState.status === 'repo_moved' ||
+    updateState.status === 'repo_not_found'
 
   return (
     <header className="topbar">
@@ -139,11 +158,47 @@ export function TopBar({
             title="More options"
           >
             <MoreVertical size={15} />
-            {hasActiveMenuMode && <span className="menu-dot-indicator" />}
+            {hasMenuBadge && <span className="menu-dot-indicator" />}
           </button>
 
           {menuOpen && (
             <div className="dropdown-menu" role="menu">
+              <button
+                className={`dropdown-item ${autoUpdatesOn ? 'active-cyan' : ''}`}
+                role="menuitemcheckbox"
+                aria-checked={autoUpdatesOn}
+                onClick={() => onToggleAutoCheckUpdates(!autoUpdatesOn)}
+              >
+                <span className="dropdown-item-label">
+                  <Download size={14} />
+                  <span>Check for Updates</span>
+                </span>
+                <span className={`badge ${autoUpdatesOn ? 'ok' : ''}`}>
+                  {autoUpdatesOn ? 'ON' : 'OFF'}
+                </span>
+              </button>
+
+              <button
+                className="dropdown-item"
+                role="menuitem"
+                disabled={updateState.status === 'checking'}
+                onClick={() => {
+                  onCheckUpdatesNow()
+                  setMenuOpen(false)
+                }}
+              >
+                <span className="dropdown-item-label">
+                  <RefreshCw size={14} />
+                  <span>
+                    {updateState.status === 'checking'
+                      ? 'Checking Updates…'
+                      : 'Check for Updates Now'}
+                  </span>
+                </span>
+              </button>
+
+              <div className="dropdown-divider" />
+
               <button
                 className={`dropdown-item ${ble.demo_mode ? 'active-amber' : ''}`}
                 role="menuitemcheckbox"
@@ -179,6 +234,25 @@ export function TopBar({
                   {showDiagnostics ? 'Shown' : 'Hidden'}
                 </span>
               </button>
+
+              {hasDismissedAlerts && (
+                <>
+                  <div className="dropdown-divider" />
+                  <button
+                    className="dropdown-item"
+                    role="menuitem"
+                    onClick={() => {
+                      onResetDismissedAlerts()
+                      setMenuOpen(false)
+                    }}
+                  >
+                    <span className="dropdown-item-label">
+                      <BellOff size={14} />
+                      <span>Restore Hidden Alerts</span>
+                    </span>
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>

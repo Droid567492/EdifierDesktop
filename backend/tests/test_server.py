@@ -10,7 +10,11 @@ from backend.server import create_app
 
 def _make_client(tmp_path: Path) -> TestClient:
     store = PresetsStore(path=tmp_path / "config.json")
-    app = create_app(store=store, enable_hotkeys=False)
+    app = create_app(
+        store=store,
+        enable_hotkeys=False,
+        enable_auto_update_check=False,
+    )
     return TestClient(app)
 
 
@@ -181,3 +185,24 @@ def test_autostart_setting_endpoint(tmp_path: Path, monkeypatch) -> None:
         r = client.post("/api/settings/autostart", json={"enabled": False})
         assert r.status_code == 200
         assert r.json()["settings"]["autostart_enabled"] is False
+
+
+def test_updates_toggle_and_alert_dismiss_endpoints(tmp_path: Path) -> None:
+    with _make_client(tmp_path) as client:
+        snap = client.get("/api/state").json()
+        assert snap["settings"]["auto_check_updates"] is True
+        assert snap["settings"]["dismissed_alerts"] == []
+
+        r = client.post("/api/settings/updates", json={"auto_check_updates": False})
+        assert r.status_code == 200
+        assert r.json()["settings"]["auto_check_updates"] is False
+
+        r = client.post(
+            "/api/settings/alerts/dismiss", json={"alert_id": "welcome_connect"}
+        )
+        assert r.status_code == 200
+        assert "welcome_connect" in r.json()["settings"]["dismissed_alerts"]
+
+        r = client.post("/api/settings/alerts/reset")
+        assert r.status_code == 200
+        assert r.json()["settings"]["dismissed_alerts"] == []

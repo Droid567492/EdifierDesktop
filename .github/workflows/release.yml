@@ -1,0 +1,129 @@
+name: Build & Release Installers
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Create venv and install Python dependencies
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install --upgrade pip
+          .\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt pyinstaller
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run backend unit & integration tests
+        shell: pwsh
+        run: .\.venv\Scripts\python.exe -m pytest backend\tests -v
+
+      - name: Ensure Inno Setup 6 is installed
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Build Windows portable EXE and Setup installer
+        shell: pwsh
+        run: .\build_release.ps1
+
+      - name: Upload Windows release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-assets
+          path: |
+            dist/EdifierM60Control-v*-win64-setup.exe
+            dist/EdifierM60Control-v*-win64-portable.exe
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Linux build & tray system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev libgirepository1.0-dev libcairo2-dev gir1.2-gtk-3.0 gir1.2-ayatanaappindicator3-0.1
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/requirements.txt pyinstaller
+
+      - name: Run backend unit & integration tests
+        run: python -m pytest backend/tests -v
+
+      - name: Build Linux .deb installer and portable .tar.gz
+        run: |
+          chmod +x installer/linux/build_linux.sh
+          bash installer/linux/build_linux.sh
+          dpkg-deb --info dist/edifier-m60-control_*.deb
+
+      - name: Upload Linux release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-release-assets
+          path: |
+            dist/edifier-m60-control_*_amd64.deb
+            dist/edifier-m60-control-v*-linux-x86_64.tar.gz
+
+  publish-release:
+    needs: [build-windows, build-linux]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-files
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          body: |
+            > **Disclaimer:** This is an unofficial community tool for Edifier M60 speakers and was built using AI assistance. It is not affiliated with Edifier and is provided as-is.
+
+            ### Downloads
+            - **Windows Installer (`*-win64-setup.exe`)**: Recommended for Windows — installs shortcuts, uninstaller, and optional Start with Windows.
+            - **Windows Portable (`*-win64-portable.exe`)**: Standalone portable Windows executable.
+            - **Linux Debian/Ubuntu (`*_amd64.deb`)**: Installs `edifier-m60-control` system-wide with desktop entry & icon (`sudo apt install ./edifier-m60-control_*.deb`).
+            - **Linux Portable (`*-linux-x86_64.tar.gz`)**: Standalone bundle for any x86_64 Linux distro (includes `install.sh` / `uninstall.sh`).
+          files: release-files/*

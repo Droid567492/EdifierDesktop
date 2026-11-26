@@ -9,6 +9,7 @@ import type {
   ScannedDevice,
   SmartLightSensitivity,
   SmartLightTimer,
+  UpdateState,
   UsbState,
 } from './types'
 
@@ -143,4 +144,23 @@ export const api = {
     postJson<{ settings: AppSettings }>('/api/settings/autostart', {
       enabled,
     }),
+
+  setAutoCheckUpdates: (auto_check_updates: boolean) =>
+    postJson<{ settings: AppSettings }>('/api/settings/updates', {
+      auto_check_updates,
+    }),
+
+  checkForUpdates: () =>
+    postJson<{ update_state: UpdateState }>('/api/updates/check'),
+
+  applyUpdate: () =>
+    postJson<{ update_state: UpdateState }>('/api/updates/apply'),
+
+  dismissAlert: (alert_id: string) =>
+    postJson<{ settings: AppSettings }>('/api/settings/alerts/dismiss', {
+      alert_id,
+    }),
+
+  resetDismissedAlerts: () =>
+    postJson<{ settings: AppSettings }>('/api/settings/alerts/reset'),
 }

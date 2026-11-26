@@ -6,8 +6,11 @@ from dataclasses import asdict, dataclass
 import json
 import os
 from pathlib import Path
+import sys
 import threading
 import uuid
+
+from .version import APP_VERSION
 
 
 @dataclass
@@ -52,9 +55,14 @@ DEFAULT_STARTER_PROFILES: list[dict] = [
 
 
 def _default_config_path() -> Path:
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    if local_app_data:
-        return Path(local_app_data) / "EdifierM60Desktop" / "config.json"
+    if sys.platform == "win32":
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            return Path(local_app_data) / "EdifierM60Desktop" / "config.json"
+    else:
+        xdg = os.environ.get("XDG_CONFIG_HOME")
+        base = Path(xdg) if xdg else (Path.home() / ".config")
+        return base / "EdifierM60Desktop" / "config.json"
     return Path.cwd() / "data" / "config.json"
 
 
@@ -78,6 +86,9 @@ class PresetsStore:
             self._data.setdefault("last_device_name", None)
             self._data.setdefault("hotkey_sync_enabled", False)
             self._data.setdefault("lock_usb_volume_on_sync", True)
+            self._data.setdefault("auto_check_updates", True)
+            if not isinstance(self._data.get("dismissed_alerts"), list):
+                self._data["dismissed_alerts"] = []
             if "saved_eq_presets" not in self._data or not isinstance(
                 self._data["saved_eq_presets"], list
             ):
@@ -100,16 +111,23 @@ class PresetsStore:
                 )
                 self.path = fallback
 
+    def _settings_locked(self) -> dict:
+        return {
+            "last_device_address": self._data.get("last_device_address"),
+            "last_device_name": self._data.get("last_device_name"),
+            "hotkey_sync_enabled": bool(self._data.get("hotkey_sync_enabled", False)),
+            "lock_usb_volume_on_sync": bool(
+                self._data.get("lock_usb_volume_on_sync", True)
+            ),
+            "auto_check_updates": bool(self._data.get("auto_check_updates", True)),
+            "dismissed_alerts": list(self._data.get("dismissed_alerts", [])),
+            "app_version": APP_VERSION,
+            "platform": sys.platform,
+        }
+
     def get_settings(self) -> dict:
         with self._lock:
-            return {
-                "last_device_address": self._data.get("last_device_address"),
-                "last_device_name": self._data.get("last_device_name"),
-                "hotkey_sync_enabled": bool(self._data.get("hotkey_sync_enabled", False)),
-                "lock_usb_volume_on_sync": bool(
-                    self._data.get("lock_usb_volume_on_sync", True)
-                ),
-            }
+            return self._settings_locked()
 
     def set_last_device(self, address: str, name: str | None = None) -> None:
         with self._lock:
@@ -123,12 +141,28 @@ class PresetsStore:
             self._data["hotkey_sync_enabled"] = bool(enabled)
             self._data["lock_usb_volume_on_sync"] = bool(lock_usb_100)
             self._save_locked()
-            return {
-                "last_device_address": self._data.get("last_device_address"),
-                "last_device_name": self._data.get("last_device_name"),
-                "hotkey_sync_enabled": self._data["hotkey_sync_enabled"],
-                "lock_usb_volume_on_sync": self._data["lock_usb_volume_on_sync"],
-            }
+            return self._settings_locked()
+
+    def set_auto_check_updates(self, enabled: bool) -> dict:
+        with self._lock:
+            self._data["auto_check_updates"] = bool(enabled)
+            self._save_locked()
+            return self._settings_locked()
+
+    def dismiss_alert(self, alert_id: str) -> dict:
+        clean = alert_id.strip()
+        with self._lock:
+            alerts = self._data.setdefault("dismissed_alerts", [])
+            if clean and clean not in alerts:
+                alerts.append(clean)
+                self._save_locked()
+            return self._settings_locked()
+
+    def reset_dismissed_alerts(self) -> dict:
+        with self._lock:
+            self._data["dismissed_alerts"] = []
+            self._save_locked()
+            return self._settings_locked()
 
     def list_eq_presets(self) -> list[dict]:
         with self._lock:

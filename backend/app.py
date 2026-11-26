@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import os
 from pathlib import Path
+import shutil
 import socket
 import subprocess
 import sys
@@ -35,15 +36,28 @@ def _find_free_port(host: str, preferred: int) -> int:
 
 
 def _find_app_browser() -> str | None:
-    candidates = [
-        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-    ]
-    for path in candidates:
-        if os.path.exists(path):
-            return path
+    if sys.platform == "win32":
+        candidates = [
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        ]
+        for path in candidates:
+            if os.path.exists(path):
+                return path
+        return None
+
+    for cmd in (
+        "chromium",
+        "chromium-browser",
+        "google-chrome",
+        "microsoft-edge",
+        "brave-browser",
+    ):
+        found = shutil.which(cmd)
+        if found:
+            return found
     return None
 
 
@@ -105,32 +119,42 @@ def _apply_window_icon_later(ico_path: Path, title_substring: str = "Edifier M60
     threading.Thread(target=_worker, daemon=True, name="M60WindowIcon").start()
 
 
+def _app_data_dir() -> Path:
+    if sys.platform == "win32":
+        return Path(os.environ.get("LOCALAPPDATA", Path.cwd())) / "EdifierM60Desktop"
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    base = Path(xdg) if xdg else (Path.home() / ".cache")
+    return base / "EdifierM60Desktop"
+
+
 def open_app_window(url: str) -> None:
-    app_data_dir = (
-        Path(os.environ.get("LOCALAPPDATA", Path.cwd())) / "EdifierM60Desktop"
-    )
+    app_data_dir = _app_data_dir()
     ico_path: Path | None = None
-    try:
-        ico_path = ensure_ico_file(app_data_dir / "app.ico")
-    except OSError:
+    if sys.platform == "win32":
         try:
-            ico_path = ensure_ico_file(Path.cwd() / "data" / "app.ico")
+            ico_path = ensure_ico_file(app_data_dir / "app.ico")
         except OSError:
-            ico_path = None
+            try:
+                ico_path = ensure_ico_file(Path.cwd() / "data" / "app.ico")
+            except OSError:
+                ico_path = None
 
     browser = _find_app_browser()
     if browser:
         profile_dir = app_data_dir / "browser-profile"
         profile_dir.mkdir(parents=True, exist_ok=True)
+        cmd = [
+            browser,
+            f"--app={url}",
+            f"--user-data-dir={profile_dir}",
+            "--window-size=1160,820",
+            "--no-first-run",
+        ]
+        if sys.platform.startswith("linux"):
+            cmd.append("--class=edifier-m60-control")
         try:
             subprocess.Popen(
-                [
-                    browser,
-                    f"--app={url}",
-                    f"--user-data-dir={profile_dir}",
-                    "--window-size=1160,820",
-                    "--no-first-run",
-                ],
+                cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
@@ -187,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     server = uvicorn.Server(config)
 
     if args.no_tray:
+        app.state.request_shutdown = lambda: setattr(server, "should_exit", True)
         if not args.no_browser:
             def _open_later() -> None:
                 time.sleep(0.8)
@@ -224,6 +249,21 @@ def main(argv: list[str] | None = None) -> int:
         if ctx is None:
             return
         asyncio.run_coroutine_threadsafe(coro_fn(ctx), loop)
+
+    tray_autostart_label = (
+        "Start with Windows" if sys.platform == "win32" else "Start at Login"
+    )
+    tray_icon_holder: list[Any] = []
+
+    def _request_shutdown() -> None:
+        server.should_exit = True
+        if tray_icon_holder:
+            try:
+                tray_icon_holder[0].stop()
+            except Exception:
+                pass
+
+    app.state.request_shutdown = _request_shutdown
 
     try:
         import pystray
@@ -303,7 +343,7 @@ def main(argv: list[str] | None = None) -> int:
             ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
-                "Start with Windows",
+                tray_autostart_label,
                 lambda _i, _it: set_autostart(not is_autostart_enabled()),
                 checked=lambda _it: is_autostart_enabled(),
             ),
@@ -316,6 +356,7 @@ def main(argv: list[str] | None = None) -> int:
             "Edifier M60 Studio Control",
             menu,
         )
+        tray_icon_holder.append(icon)
         icon.run()
     except KeyboardInterrupt:
         server.should_exit = True

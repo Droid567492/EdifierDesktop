@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { AlertTriangle, Download, ExternalLink, Info, Search } from 'lucide-react'
 import { api } from './api'
+import { AlertBanner } from './components/AlertBanner'
 import { DeviceModal } from './components/DeviceModal'
 import { DiagnosticsDrawer } from './components/DiagnosticsDrawer'
 import { EqualizerCard } from './components/EqualizerCard'
@@ -18,6 +20,7 @@ import type {
   SavedEqPreset,
   SmartLightSensitivity,
   SmartLightTimer,
+  UpdateState,
   UsbState,
 } from './types'
 
@@ -80,6 +83,26 @@ const INITIAL_SETTINGS: AppSettings = {
   last_device_name: null,
   hotkey_sync_enabled: false,
   lock_usb_volume_on_sync: true,
+  auto_check_updates: true,
+  dismissed_alerts: [],
+  app_version: '1.1.0',
+  platform: 'win32',
+}
+
+const INITIAL_UPDATE: UpdateState = {
+  status: 'idle',
+  current_version: '1.1.0',
+  latest_version: null,
+  release_url: null,
+  release_notes: null,
+  asset_name: null,
+  asset_url: null,
+  asset_size: null,
+  install_mode: 'source',
+  message: null,
+  repo_url: 'https://github.com/Droid567492/EdifierDesktop',
+  repo_search_url: 'https://github.com/search?q=Edifier+M60+Desktop+Control&type=repositories',
+  checked_at: null,
 }
 
 export default function App() {
@@ -87,11 +110,14 @@ export default function App() {
   const [usb, setUsb] = useState<UsbState>(INITIAL_USB)
   const [savedPresets, setSavedPresets] = useState<SavedEqPreset[]>([])
   const [settings, setSettings] = useState<AppSettings>(INITIAL_SETTINGS)
+  const [updateState, setUpdateState] = useState<UpdateState>(INITIAL_UPDATE)
   const [logs, setLogs] = useState<FrameLogEntry[]>([])
   const [wsConnected, setWsConnected] = useState(false)
   const [showConnectModal, setShowConnectModal] = useState(false)
   const [showDiagnostics, setShowDiagnostics] = useState(false)
   const [toastError, setToastError] = useState<string | null>(null)
+  const [manualUpdateCheck, setManualUpdateCheck] = useState(false)
+  const [sessionHiddenAlerts, setSessionHiddenAlerts] = useState<string[]>([])
   const wsRef = useRef<WebSocket | null>(null)
 
   const applySnapshot = useCallback((snap: AppSnapshot) => {
@@ -99,6 +125,7 @@ export default function App() {
     setUsb(snap.usb_state)
     setSavedPresets(snap.saved_eq_presets)
     setSettings(snap.settings)
+    if (snap.update_state) setUpdateState(snap.update_state)
     setLogs(snap.recent_logs)
   }, [])
 
@@ -137,6 +164,8 @@ export default function App() {
             setUsb(msg.data as UsbState)
           } else if (msg.type === 'settings') {
             setSettings(msg.data as AppSettings)
+          } else if (msg.type === 'update_state') {
+            setUpdateState(msg.data as UpdateState)
           } else if (msg.type === 'saved_eq_presets') {
             const d = msg.data as { presets: SavedEqPreset[] }
             setSavedPresets(d.presets)
@@ -166,11 +195,30 @@ export default function App() {
     }
   }
 
+  const dismissedForever = settings.dismissed_alerts ?? []
+  const isAlertVisible = (id: string) =>
+    !dismissedForever.includes(id) && !sessionHiddenAlerts.includes(id)
+
+  const hideForSession = (id: string) => {
+    setSessionHiddenAlerts((prev) => (prev.includes(id) ? prev : [...prev, id]))
+  }
+
+  const dontShowAgain = (id: string) => {
+    void runAction(async () => {
+      const res = await api.dismissAlert(id)
+      setSettings(res.settings)
+    })
+  }
+
+  const updateAvailableId = `update_available:${updateState.latest_version ?? 'new'}`
+
   return (
     <div className="app-shell">
       <TopBar
         ble={ble}
         usb={usb}
+        settings={settings}
+        updateState={updateState}
         wsConnected={wsConnected}
         onOpenConnect={() => setShowConnectModal(true)}
         onDisconnectBle={() => void runAction(() => api.disconnectBle())}
@@ -182,25 +230,188 @@ export default function App() {
           })
         }
         onToggleDiagnostics={() => setShowDiagnostics((s) => !s)}
+        onToggleAutoCheckUpdates={(enabled) =>
+          void runAction(async () => {
+            const res = await api.setAutoCheckUpdates(enabled)
+            setSettings(res.settings)
+          })
+        }
+        onCheckUpdatesNow={() => {
+          setManualUpdateCheck(true)
+          setSessionHiddenAlerts((prev) =>
+            prev.filter(
+              (id) =>
+                id !== 'update_repo_missing' &&
+                id !== 'update_error' &&
+                id !== 'update_up_to_date',
+            ),
+          )
+          void runAction(async () => {
+            const res = await api.checkForUpdates()
+            setUpdateState(res.update_state)
+          })
+        }}
+        onResetDismissedAlerts={() => {
+          setSessionHiddenAlerts([])
+          void runAction(async () => {
+            const res = await api.resetDismissedAlerts()
+            setSettings(res.settings)
+          })
+        }}
         showDiagnostics={showDiagnostics}
       />
 
-      {toastError && (
-        <div className="notice-banner error">
-          <span>{toastError}</span>
-          <button className="btn" onClick={() => setToastError(null)}>
-            Dismiss
-          </button>
-        </div>
+      {updateState.status === 'update_available' &&
+        isAlertVisible(updateAvailableId) && (
+          <AlertBanner
+            alertId={updateAvailableId}
+            variant="update"
+            icon={<Download size={16} />}
+            title={`Update available: v${updateState.latest_version}`}
+            message={
+              <span>
+                {updateState.message}
+                {updateState.asset_name ? ` (${updateState.asset_name})` : ''}
+              </span>
+            }
+            actions={
+              <>
+                {updateState.install_mode !== 'source' && updateState.asset_url && (
+                  <button
+                    className="btn btn-primary"
+                    style={{ padding: '4px 10px', fontSize: 12 }}
+                    onClick={() =>
+                      void runAction(async () => {
+                        const res = await api.applyUpdate()
+                        setUpdateState(res.update_state)
+                      })
+                    }
+                  >
+                    <Download size={13} />
+                    Update Now
+                  </button>
+                )}
+                {updateState.release_url && (
+                  <a
+                    className="btn"
+                    style={{ padding: '4px 10px', fontSize: 12, textDecoration: 'none' }}
+                    href={updateState.release_url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <ExternalLink size={12} />
+                    Release Notes
+                  </a>
+                )}
+              </>
+            }
+            onDismiss={() => hideForSession(updateAvailableId)}
+            onDontShowAgain={dontShowAgain}
+          />
+        )}
+
+      {(updateState.status === 'repo_moved' ||
+        updateState.status === 'repo_not_found') &&
+        isAlertVisible('update_repo_missing') && (
+          <AlertBanner
+            alertId="update_repo_missing"
+            variant="warning"
+            icon={<AlertTriangle size={16} />}
+            title="Auto-Update could not reach the GitHub repository"
+            message={
+              <span>
+                {updateState.message ||
+                  'The repository could not be found or appears to have changed name. Please look up the project on GitHub to confirm whether the repository was renamed.'}
+              </span>
+            }
+            actions={
+              <a
+                className="btn btn-primary"
+                style={{ padding: '4px 10px', fontSize: 12, textDecoration: 'none' }}
+                href={updateState.repo_search_url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <Search size={12} />
+                Look Up Project on GitHub
+              </a>
+            }
+            onDismiss={() => hideForSession('update_repo_missing')}
+            onDontShowAgain={dontShowAgain}
+          />
+        )}
+
+      {(updateState.status === 'updating' || updateState.status === 'updated') &&
+        updateState.message && (
+          <AlertBanner
+            alertId="update_progress"
+            variant="info"
+            icon={<Download size={15} />}
+            message={updateState.message}
+            onDismiss={() => hideForSession('update_progress')}
+            onDontShowAgain={dontShowAgain}
+          />
+        )}
+
+      {updateState.status === 'error' &&
+        updateState.message &&
+        isAlertVisible('update_error') && (
+          <AlertBanner
+            alertId="update_error"
+            variant="error"
+            icon={<AlertTriangle size={15} />}
+            message={updateState.message}
+            onDismiss={() => hideForSession('update_error')}
+            onDontShowAgain={dontShowAgain}
+          />
+        )}
+
+      {manualUpdateCheck &&
+        updateState.status === 'up_to_date' &&
+        updateState.message &&
+        isAlertVisible('update_up_to_date') && (
+          <AlertBanner
+            alertId="update_up_to_date"
+            variant="info"
+            icon={<Info size={15} />}
+            message={updateState.message}
+            onDismiss={() => {
+              setManualUpdateCheck(false)
+              hideForSession('update_up_to_date')
+            }}
+            onDontShowAgain={(id) => {
+              setManualUpdateCheck(false)
+              dontShowAgain(id)
+            }}
+          />
+        )}
+
+      {toastError && isAlertVisible('toast_error') && (
+        <AlertBanner
+          alertId="toast_error"
+          variant="error"
+          icon={<AlertTriangle size={15} />}
+          message={toastError}
+          onDismiss={() => setToastError(null)}
+          onDontShowAgain={(id) => {
+            dontShowAgain(id)
+            setToastError(null)
+          }}
+        />
       )}
 
-      {ble.notice && (
-        <div className="notice-banner">
-          <span>{ble.notice}</span>
-        </div>
+      {ble.notice && isAlertVisible('ble_notice') && (
+        <AlertBanner
+          alertId="ble_notice"
+          variant="warning"
+          icon={<Info size={15} />}
+          message={ble.notice}
+          onDismiss={() => hideForSession('ble_notice')}
+          onDontShowAgain={dontShowAgain}
+        />
       )}
 
-      {!ble.connected && !ble.connecting && (
+      {!ble.connected && !ble.connecting && isAlertVisible('welcome_connect') && (
         <div
           className="card"
           style={{
@@ -221,7 +432,13 @@ export default function App() {
               light, and LDAC.
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <button
+              className="btn"
+              onClick={() => dontShowAgain('welcome_connect')}
+            >
+              Don&apos;t show again
+            </button>
             <button
               className="btn btn-primary"
               onClick={() => setShowConnectModal(true)}
@@ -354,6 +571,7 @@ export default function App() {
               setSettings(res.settings)
             })
           }
+          onDontShowAgain={dontShowAgain}
         />
       </main>
 
@@ -369,12 +587,26 @@ export default function App() {
         open={showConnectModal}
         lastAddress={settings.last_device_address}
         lastName={settings.last_device_name}
+        dismissedAlerts={dismissedForever}
+        onDontShowAgain={dontShowAgain}
         onClose={() => setShowConnectModal(false)}
         onConnect={async (addr) => {
           const res = await api.connectBle(addr)
           setBle(res.ble_state)
         }}
       />
+
+      <footer className="app-footer">
+        <span>
+          <strong className="mono">v{settings.app_version ?? '1.1.0'}</strong> •{' '}
+          <a href={updateState.repo_url} target="_blank" rel="noreferrer">
+            GitHub Repository
+          </a>
+        </span>
+        <span>
+          Unofficial Edifier M60 controller • Built using AI assistance • Provided as-is
+        </span>
+      </footer>
     </div>
   )
 }

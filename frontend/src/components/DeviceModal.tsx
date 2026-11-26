@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react'
-import { Bluetooth, Loader2, Radio, Search, X } from 'lucide-react'
+import { Bluetooth, Info, Loader2, Radio, Search, X } from 'lucide-react'
 import { api } from '../api'
 import type { ScannedDevice } from '../types'
+import { AlertBanner } from './AlertBanner'
 
 interface DeviceModalProps {
   open: boolean
   lastAddress: string | null
   lastName: string | null
+  dismissedAlerts: string[]
+  onDontShowAgain: (alertId: string) => void
   onClose: () => void
   onConnect: (address: string) => Promise<void>
 }
@@ -15,6 +18,8 @@ export function DeviceModal({
   open,
   lastAddress,
   lastName,
+  dismissedAlerts,
+  onDontShowAgain,
   onClose,
   onConnect,
 }: DeviceModalProps) {
@@ -74,14 +79,22 @@ export function DeviceModal({
           </button>
         </div>
 
-        <div className="notice-banner" style={{ alignItems: 'flex-start' }}>
-          <div style={{ fontSize: 12 }}>
-            <strong>Connection tips:</strong> The M60 allows only{' '}
-            <strong>one BLE connection at a time</strong> — close the EDIFIER ConneX
-            phone app first. If the speaker isn&apos;t advertising while idle, wake it
-            by playing audio or toggling Bluetooth/power.
-          </div>
-        </div>
+        {!dismissedAlerts.includes('ble_connect_tips') && (
+          <AlertBanner
+            alertId="ble_connect_tips"
+            variant="warning"
+            icon={<Info size={15} />}
+            message={
+              <span style={{ fontSize: 12 }}>
+                <strong>Connection tips:</strong> The M60 allows only{' '}
+                <strong>one BLE connection at a time</strong> — close the EDIFIER
+                ConneX phone app first. If the speaker isn&apos;t advertising while
+                idle, wake it by playing audio or toggling Bluetooth/power.
+              </span>
+            }
+            onDontShowAgain={onDontShowAgain}
+          />
+        )}
 
         {lastAddress && (
           <div className="device-row edifier">
@@ -130,7 +143,18 @@ export function DeviceModal({
           </button>
         </div>
 
-        {error && <div className="notice-banner error">{error}</div>}
+        {error && !dismissedAlerts.includes('ble_modal_error') && (
+          <AlertBanner
+            alertId="ble_modal_error"
+            variant="error"
+            message={error}
+            onDismiss={() => setError(null)}
+            onDontShowAgain={(id) => {
+              onDontShowAgain(id)
+              setError(null)
+            }}
+          />
+        )}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {devices.length === 0 && !scanning && (

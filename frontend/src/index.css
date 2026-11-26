@@ -295,6 +295,12 @@ select {
   gap: 8px;
 }
 
+.dropdown-divider {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: 2px 4px;
+}
+
 /* Grid & Cards */
 .main-grid {
   display: grid;
@@ -360,6 +366,39 @@ select {
   background: var(--accent-rose-soft);
   border-color: rgba(244, 63, 94, 0.35);
   color: #fecdd3;
+}
+
+.notice-banner.update {
+  background: var(--accent-emerald-soft);
+  border-color: rgba(16, 185, 129, 0.38);
+  color: #a7f3d0;
+}
+
+.notice-banner.info {
+  background: var(--accent-cyan-soft);
+  border-color: rgba(56, 189, 248, 0.35);
+  color: #bae6fd;
+}
+
+.app-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 4px 2px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.app-footer a {
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+.app-footer a:hover {
+  color: var(--accent-amber);
+  text-decoration: underline;
 }
 
 /* Volume Controls */

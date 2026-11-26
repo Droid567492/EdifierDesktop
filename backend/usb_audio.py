@@ -5,7 +5,11 @@ from __future__ import annotations
 import asyncio
 from dataclasses import asdict, dataclass, field
 import logging
+from pathlib import Path
+import re
+import shutil
 import subprocess
+import sys
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -138,7 +142,12 @@ def _probe_usb_pnp_windows() -> tuple[bool, str | None, list[dict[str, str]]]:
 
 
 def _get_endpoint_and_status_sync(include_pnp: bool = False) -> UsbAudioStatus:
-    """Inspect Windows WASAPI playback devices using COM safely on a worker thread."""
+    """Inspect OS audio playback endpoints (Windows WASAPI or Linux PipeWire/Pulse)."""
+    if sys.platform.startswith("linux"):
+        return _get_linux_usb_status_sync(include_pnp=include_pnp)
+    if sys.platform != "win32":
+        return UsbAudioStatus()
+
     status = UsbAudioStatus()
     if include_pnp:
         present, pnp_name, interfaces = _probe_usb_pnp_windows()
@@ -209,9 +218,175 @@ def _get_endpoint_and_status_sync(include_pnp: bool = False) -> UsbAudioStatus:
     return status
 
 
+def parse_linux_pactl_sinks(output: str) -> str | None:
+    """Return the pactl sink name for an Edifier M60 USB-C sink (never Bluetooth)."""
+    for line in output.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 2:
+            continue
+        sink_name = parts[1].strip()
+        low = sink_name.lower()
+        if "bluez" in low or "bluetooth" in low:
+            continue
+        if not ("alsa_output.usb-" in low or "usb-" in low):
+            continue
+        if ("edifier" in low and "m60" in low) or "2d99" in low or "bestechnic" in low:
+            return sink_name
+    return None
+
+
+def parse_linux_pactl_volume(
+    vol_output: str, mute_output: str
+) -> tuple[int | None, bool | None]:
+    """Parse `pactl get-sink-volume` and `pactl get-sink-mute` outputs."""
+    pct: int | None = None
+    m = re.search(r"(\d+)\s*%", vol_output)
+    if m:
+        pct = max(0, min(100, int(m.group(1))))
+    muted: bool | None = None
+    ml = mute_output.lower()
+    if "yes" in ml:
+        muted = True
+    elif "no" in ml:
+        muted = False
+    return pct, muted
+
+
+def _probe_usb_sysfs_linux() -> tuple[bool, str | None, list[dict[str, str]]]:
+    usb_root = Path("/sys/bus/usb/devices")
+    if not usb_root.exists():
+        return False, None, []
+    interfaces: list[dict[str, str]] = []
+    pnp_name: str | None = None
+    try:
+        for dev_dir in usb_root.iterdir():
+            vid_file = dev_dir / "idVendor"
+            pid_file = dev_dir / "idProduct"
+            if not vid_file.exists() or not pid_file.exists():
+                continue
+            vid = vid_file.read_text(encoding="utf-8", errors="ignore").strip().upper()
+            pid = pid_file.read_text(encoding="utf-8", errors="ignore").strip().upper()
+            if vid == EDIFIER_USB_VID and pid == EDIFIER_M60_USB_PID:
+                prod_file = dev_dir / "product"
+                prod = (
+                    prod_file.read_text(encoding="utf-8", errors="ignore").strip()
+                    if prod_file.exists()
+                    else "EDIFIER M60"
+                )
+                if pnp_name is None:
+                    pnp_name = prod
+                interfaces.append(
+                    {
+                        "class": "USB",
+                        "name": prod,
+                        "instance_id": f"USB\\VID_{vid}&PID_{pid}\\{dev_dir.name}",
+                        "status": "OK",
+                    }
+                )
+    except OSError:
+        return False, None, []
+    return len(interfaces) > 0, pnp_name, interfaces
+
+
+def _get_linux_usb_status_sync(include_pnp: bool = False) -> UsbAudioStatus:
+    status = UsbAudioStatus()
+    if include_pnp:
+        present, pnp_name, ifaces = _probe_usb_sysfs_linux()
+        status.usb_hardware_present = present
+        status.usb_pnp_name = pnp_name
+        status.hid_interfaces = ifaces
+        if present:
+            status.usb_vid_pid = f"{EDIFIER_USB_VID}:{EDIFIER_M60_USB_PID}"
+
+    if not shutil.which("pactl"):
+        return status
+    try:
+        sinks_proc = subprocess.run(
+            ["pactl", "list", "short", "sinks"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if sinks_proc.returncode != 0:
+            return status
+        sink_name = parse_linux_pactl_sinks(sinks_proc.stdout)
+        if not sink_name:
+            return status
+
+        status.connected = True
+        status.device_name = sink_name
+        status.device_id = sink_name
+        if status.usb_vid_pid is None and status.usb_hardware_present:
+            status.usb_vid_pid = f"{EDIFIER_USB_VID}:{EDIFIER_M60_USB_PID}"
+
+        def_proc = subprocess.run(
+            ["pactl", "get-default-sink"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if def_proc.returncode == 0:
+            status.is_default = def_proc.stdout.strip() == sink_name
+
+        vol_proc = subprocess.run(
+            ["pactl", "get-sink-volume", sink_name],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        mute_proc = subprocess.run(
+            ["pactl", "get-sink-mute", sink_name],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        pct, muted = parse_linux_pactl_volume(vol_proc.stdout, mute_proc.stdout)
+        status.volume_percent = pct
+        status.muted = muted
+    except Exception as exc:
+        status.error = f"PipeWire/Pulse inspection failed: {exc}"
+    return status
+
+
+def _set_linux_usb_volume_sync(
+    volume_percent: int | None = None, muted: bool | None = None
+) -> UsbAudioStatus:
+    if shutil.which("pactl"):
+        try:
+            sinks_proc = subprocess.run(
+                ["pactl", "list", "short", "sinks"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            sink_name = parse_linux_pactl_sinks(sinks_proc.stdout)
+            if sink_name:
+                if volume_percent is not None:
+                    clamped = max(0, min(100, int(volume_percent)))
+                    subprocess.run(
+                        ["pactl", "set-sink-volume", sink_name, f"{clamped}%"],
+                        capture_output=True,
+                        timeout=2,
+                    )
+                if muted is not None:
+                    subprocess.run(
+                        ["pactl", "set-sink-mute", sink_name, "1" if muted else "0"],
+                        capture_output=True,
+                        timeout=2,
+                    )
+        except Exception as exc:
+            logger.warning("Failed to update Linux M60 USB sink: %s", exc)
+    return _get_linux_usb_status_sync(include_pnp=False)
+
+
 def _set_endpoint_volume_sync(
     volume_percent: int | None = None, muted: bool | None = None
 ) -> UsbAudioStatus:
+    if sys.platform.startswith("linux"):
+        return _set_linux_usb_volume_sync(volume_percent, muted)
+    if sys.platform != "win32":
+        return UsbAudioStatus()
+
     com_initialized = False
     try:
         import comtypes

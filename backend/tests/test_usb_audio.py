@@ -9,6 +9,8 @@ from backend.usb_audio import (
     PKEY_IFACE_PATH,
     filter_m60_usb_pnp_items,
     is_m60_usb_audio_device,
+    parse_linux_pactl_sinks,
+    parse_linux_pactl_volume,
 )
 
 
@@ -132,3 +134,23 @@ def test_pnp_filter_rejects_bt_and_other_docks() -> None:
     assert present is True
     assert name == "EDIFIER M60"
     assert len(ifaces) == 1
+
+
+def test_linux_pactl_sink_and_volume_parsers() -> None:
+    sinks_out = (
+        "42\talsa_output.pci-0000_00_1f.3.analog-stereo\tPipeWire\ts32le 2ch 48000Hz\tSUSPENDED\n"
+        "58\tbluez_output.6C_16_29_61_E6_63.1\tPipeWire\ts16le 2ch 48000Hz\tRUNNING\n"
+        "61\talsa_output.usb-bestechnic_EDIFIER_M60-00.analog-stereo\tPipeWire\ts24le 2ch 96000Hz\tRUNNING\n"
+    )
+    assert (
+        parse_linux_pactl_sinks(sinks_out)
+        == "alsa_output.usb-bestechnic_EDIFIER_M60-00.analog-stereo"
+    )
+
+    # Without USB sink present, Bluetooth sink must NOT match
+    bt_only = "58\tbluez_output.6C_16_29_61_E6_63.1\tPipeWire\ts16le 2ch 48000Hz\tRUNNING\n"
+    assert parse_linux_pactl_sinks(bt_only) is None
+
+    vol_out = "Volume: front-left: 49152 /  75% / -7.50 dB,   front-right: 49152 /  75% / -7.50 dB"
+    assert parse_linux_pactl_volume(vol_out, "Mute: no") == (75, False)
+    assert parse_linux_pactl_volume(vol_out, "Mute: yes") == (75, True)

@@ -1,8 +1,8 @@
 bleak>=0.22.0
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
-pycaw>=20240210
-comtypes>=1.4.0
+pycaw>=20240210; sys_platform == "win32"
+comtypes>=1.4.0; sys_platform == "win32"
 pystray>=0.19.5
 pillow>=11.0.0
 pytest>=8.3.0

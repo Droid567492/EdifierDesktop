@@ -17,6 +17,7 @@ interface SettingsCardProps {
   onRename: (name: string) => void
   onDisconnectBtAudio: () => void
   onToggleAutostart: (enabled: boolean) => void
+  onDontShowAgain: (alertId: string) => void
 }
 
 const TIMERS: { id: SmartLightTimer; label: string }[] = [
@@ -47,6 +48,7 @@ export function SettingsCard({
   onRename,
   onDisconnectBtAudio,
   onToggleAutostart,
+  onDontShowAgain,
 }: SettingsCardProps) {
   const [nameInput, setNameInput] = useState(ble.device_name)
   const [confirmAction, setConfirmAction] = useState<
@@ -54,12 +56,15 @@ export function SettingsCard({
     | { kind: 'disconnect_bt' }
     | null
   >(null)
+  const [dontAskAgainChecked, setDontAskAgainChecked] = useState(false)
 
   useEffect(() => {
     setNameInput(ble.device_name)
   }, [ble.device_name])
 
   const disabled = !ble.connected
+  const dismissed = settings.dismissed_alerts ?? []
+  const isLinux = Boolean(settings.platform && settings.platform !== 'win32')
   const utf8Bytes = new TextEncoder().encode(nameInput).length
   const nameValid = utf8Bytes >= 1 && utf8Bytes <= 35
 
@@ -171,9 +176,10 @@ export function SettingsCard({
                   className={`seg-btn ${ble.ldac_mode === m.id ? 'active' : ''}`}
                   disabled={disabled}
                   onClick={() => {
-                    if (ble.demo_mode) {
+                    if (ble.demo_mode || dismissed.includes('confirm_ldac')) {
                       onSetLdac(m.id)
                     } else {
+                      setDontAskAgainChecked(false)
                       setConfirmAction({ kind: 'ldac', mode: m.id })
                     }
                   }}
@@ -222,7 +228,14 @@ export function SettingsCard({
             <button
               className="btn btn-danger"
               disabled={disabled}
-              onClick={() => setConfirmAction({ kind: 'disconnect_bt' })}
+              onClick={() => {
+                if (dismissed.includes('confirm_disconnect_bt')) {
+                  onDisconnectBtAudio()
+                } else {
+                  setDontAskAgainChecked(false)
+                  setConfirmAction({ kind: 'disconnect_bt' })
+                }
+              }}
             >
               <BluetoothOff size={14} />
               Disconnect BT Audio
@@ -233,7 +246,9 @@ export function SettingsCard({
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <Power size={15} color="#94a3b8" />
               <div>
-                <div style={{ fontWeight: 600, fontSize: 13 }}>Start with Windows</div>
+                <div style={{ fontWeight: 600, fontSize: 13 }}>
+                  {isLinux ? 'Start at Login' : 'Start with Windows'}
+                </div>
                 <div style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
                   Launch quietly in the system tray at login
                   {settings.autostart_error ? ` (${settings.autostart_error})` : ''}
@@ -276,8 +291,25 @@ export function SettingsCard({
             <p style={{ margin: 0, fontSize: 13, color: 'var(--text-secondary)' }}>
               {confirmAction.kind === 'ldac'
                 ? `Changing LDAC preference to "${confirmAction.mode}" can cause the Edifier M60 to drop both Bluetooth audio and BLE control connections while applying the setting, and may reset smart-light sensitivity. Continue?`
-                : 'Sending 0xCD disconnects the Bluetooth A2DP audio link (and may drop BLE as well). You may need to reconnect from Windows Bluetooth settings afterward.'}
+                : 'Sending 0xCD disconnects the Bluetooth A2DP audio link (and may drop BLE as well). You may need to reconnect from system Bluetooth settings afterward.'}
             </p>
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 7,
+                fontSize: 12,
+                color: 'var(--text-secondary)',
+                cursor: 'pointer',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={dontAskAgainChecked}
+                onChange={(e) => setDontAskAgainChecked(e.target.checked)}
+              />
+              Don&apos;t show this alert again
+            </label>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
               <button className="btn" onClick={() => setConfirmAction(null)}>
                 Cancel
@@ -285,6 +317,13 @@ export function SettingsCard({
               <button
                 className="btn btn-primary"
                 onClick={() => {
+                  if (dontAskAgainChecked) {
+                    onDontShowAgain(
+                      confirmAction.kind === 'ldac'
+                        ? 'confirm_ldac'
+                        : 'confirm_disconnect_bt',
+                    )
+                  }
                   if (confirmAction.kind === 'ldac') {
                     onSetLdac(confirmAction.mode)
                   } else {
