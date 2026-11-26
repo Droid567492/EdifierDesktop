@@ -20,6 +20,8 @@ import type {
   SavedEqPreset,
   SmartLightSensitivity,
   SmartLightTimer,
+  SpeakerModel,
+  SubOutLevel,
   UpdateState,
   UsbState,
 } from './types'
@@ -28,8 +30,9 @@ const INITIAL_BLE: BleState = {
   connected: false,
   connecting: false,
   demo_mode: false,
+  model: 'm60',
   address: null,
-  device_name: 'EDIFIER M60',
+  device_name: 'EDIFIER M60 / M90',
   firmware: null,
   classic_mac: null,
   capabilities: null,
@@ -55,6 +58,10 @@ const INITIAL_BLE: BleState = {
   prompt_tone: true,
   smart_light_timer: '10s',
   smart_light_sensitivity: 'general',
+  sub_out_level: 'medium',
+  multipoint: false,
+  power_save: false,
+  timed_off_minutes: 0,
   a2dp_state_code: null,
   a2dp_state: 'unknown',
   audio_decoding_code: null,
@@ -85,13 +92,13 @@ const INITIAL_SETTINGS: AppSettings = {
   lock_usb_volume_on_sync: true,
   auto_check_updates: true,
   dismissed_alerts: [],
-  app_version: '1.1.0',
+  app_version: '1.2.0',
   platform: 'win32',
 }
 
 const INITIAL_UPDATE: UpdateState = {
   status: 'idle',
-  current_version: '1.1.0',
+  current_version: '1.2.0',
   latest_version: null,
   release_url: null,
   release_notes: null,
@@ -101,7 +108,7 @@ const INITIAL_UPDATE: UpdateState = {
   install_mode: 'source',
   message: null,
   repo_url: 'https://github.com/Droid567492/EdifierDesktop',
-  repo_search_url: 'https://github.com/search?q=Edifier+M60+Desktop+Control&type=repositories',
+  repo_search_url: 'https://github.com/search?q=Edifier+M60+M90+Desktop+Control&type=repositories',
   checked_at: null,
 }
 
@@ -223,9 +230,10 @@ export default function App() {
         onOpenConnect={() => setShowConnectModal(true)}
         onDisconnectBle={() => void runAction(() => api.disconnectBle())}
         onRefresh={() => void runAction(() => api.refreshBle())}
-        onToggleDemo={() =>
+        onToggleDemo={(targetModel: SpeakerModel) =>
           void runAction(async () => {
-            const res = await api.setDemoMode(!ble.demo_mode)
+            const disable = ble.demo_mode && ble.model === targetModel
+            const res = await api.setDemoMode(!disable, targetModel)
             setBle(res.ble_state)
           })
         }
@@ -425,11 +433,11 @@ export default function App() {
         >
           <div style={{ minWidth: 0, flex: '1 1 240px' }}>
             <div style={{ fontWeight: 700, fontSize: 15 }}>
-              Ready to connect your Edifier M60
+              Ready to connect your Edifier M60 or M90
             </div>
             <div style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
-              Connect over Bluetooth LE to control volume, inputs, 6-band EQ, smart
-              light, and LDAC.
+              Connect over Bluetooth LE to control volume, inputs, 6/9-band EQ, LDAC,
+              and hardware settings.
             </div>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
@@ -518,9 +526,9 @@ export default function App() {
               setBle(res.ble_state)
             })
           }
-          onSaveProfile={(name, gainsDb, freqs) =>
+          onSaveProfile={(name, gainsDb, freqs, model) =>
             void runAction(async () => {
-              const res = await api.saveEqProfile(name, gainsDb, freqs)
+              const res = await api.saveEqProfile(name, gainsDb, freqs, model)
               setSavedPresets(res.presets)
             })
           }
@@ -538,6 +546,36 @@ export default function App() {
           onSetSmartLight={(timer: SmartLightTimer, sens: SmartLightSensitivity) =>
             void runAction(async () => {
               const res = await api.setSmartLight(timer, sens)
+              setBle(res.ble_state)
+            })
+          }
+          onSetSubOut={(level: SubOutLevel) =>
+            void runAction(async () => {
+              const res = await api.setSubOut(level)
+              setBle(res.ble_state)
+            })
+          }
+          onSetMultipoint={(enabled) =>
+            void runAction(async () => {
+              const res = await api.setMultipoint(enabled)
+              setBle(res.ble_state)
+            })
+          }
+          onSetPowerSave={(enabled) =>
+            void runAction(async () => {
+              const res = await api.setPowerSave(enabled)
+              setBle(res.ble_state)
+            })
+          }
+          onSetTimedOff={(minutes) =>
+            void runAction(async () => {
+              const res = await api.setTimedOff(minutes)
+              setBle(res.ble_state)
+            })
+          }
+          onPowerOff={() =>
+            void runAction(async () => {
+              const res = await api.powerOffDevice()
               setBle(res.ble_state)
             })
           }
@@ -598,13 +636,13 @@ export default function App() {
 
       <footer className="app-footer">
         <span>
-          <strong className="mono">v{settings.app_version ?? '1.1.0'}</strong> •{' '}
+          <strong className="mono">v{settings.app_version ?? '1.2.0'}</strong> •{' '}
           <a href={updateState.repo_url} target="_blank" rel="noreferrer">
             GitHub Repository
           </a>
         </span>
         <span>
-          Unofficial Edifier M60 controller • Built using AI assistance • Provided as-is
+          Unofficial Edifier M60 / M90 controller • Built using AI assistance • Provided as-is
         </span>
       </footer>
     </div>

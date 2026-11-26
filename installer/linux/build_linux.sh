@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 APP_VERSION="$(python3 -c "from backend.version import APP_VERSION; print(APP_VERSION)")"
-echo "==> Building Edifier M60 Studio Control v${APP_VERSION} for Linux (x86_64)"
+echo "==> Building Edifier M60 / M90 Studio Control v${APP_VERSION} for Linux (x86_64)"
 
 echo "[1/5] Building frontend bundle..."
 pushd frontend >/dev/null
@@ -59,10 +59,10 @@ Architecture: amd64
 Maintainer: Droid567492 <Droid567492@users.noreply.github.com>
 Depends: libc6, libglib2.0-0, libgtk-3-0 | gir1.2-gtk-3.0, bluez
 Recommends: pulseaudio-utils | pipewire-pulse, chromium | google-chrome
-Description: Desktop controller for Edifier M60 speakers over BLE and USB-C
- Unofficial desktop control app for Edifier M60 speakers (volume, input source,
- 6-band custom EQ, smart light, LDAC, AVRCP, and USB-C audio control).
- Built using AI assistance.
+Description: Desktop controller for Edifier M60 / M90 speakers over BLE and USB-C
+ Unofficial desktop control app for Edifier M60 & M90 speakers (volume, input
+ source, 6/9-band custom EQ, Sub Out, multipoint, power-save, smart light,
+ LDAC, AVRCP, and USB-C audio control). Built using AI assistance.
 EOF
 
 cat > "${DEB_ROOT}/DEBIAN/postinst" <<'EOF'
@@ -118,8 +118,8 @@ cp "${HERE}/edifier-m60-control.png" "${ICON_DIR}/edifier-m60-control.png"
 cat > "${APPS_DIR}/edifier-m60-control.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
-Name=Edifier M60 Studio Control
-Comment=Control Edifier M60 desktop speakers over Bluetooth LE and USB-C
+Name=Edifier M60 / M90 Studio Control
+Comment=Control Edifier M60 / M90 desktop speakers over Bluetooth LE and USB-C
 Exec=${APP_DIR}/edifier-m60-control
 Icon=edifier-m60-control
 Terminal=false
@@ -141,7 +141,7 @@ rm -rf "${HOME}/.local/share/edifier-m60-control"
 rm -f "${HOME}/.local/bin/edifier-m60-control"
 rm -f "${HOME}/.local/share/applications/edifier-m60-control.desktop"
 rm -f "${HOME}/.local/share/icons/hicolor/256x256/apps/edifier-m60-control.png"
-echo "Uninstalled Edifier M60 Studio Control."
+echo "Uninstalled Edifier M60 / M90 Studio Control."
 EOF
 chmod +x "${PORT_ROOT}/uninstall.sh"
 

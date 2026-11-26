@@ -12,7 +12,7 @@ ICO_SIZES = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256,
 
 
 def create_app_icon_image(size: int = 256) -> Image.Image:
-    """Render the minimalist Edifier M60 speaker cabinet icon at the requested square size."""
+    """Render the minimalist Edifier M60 / M90 speaker cabinet icon at the requested square size."""
     base = 256
     img = Image.new("RGBA", (base, base), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)

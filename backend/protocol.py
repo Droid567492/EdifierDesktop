@@ -1,7 +1,8 @@
-"""Edifier M60 BLE Control Protocol implementation.
+"""Edifier M60 / M90 BLE Control Protocol implementation.
 
-Reference specification verified against real Edifier M60 firmware 2.4.1
-(from kralonur/edifier-speakers-ble docs/edifier-m60-ble.md).
+Reference specifications:
+- Edifier M60 firmware 2.4.1 (kralonur/edifier-speakers-ble docs/edifier-m60-ble.md)
+- Edifier M90 firmware 2.5.1 (kralonur/edifier-speakers-ble docs/edifier-m90-ble.md)
 """
 
 from __future__ import annotations
@@ -14,18 +15,40 @@ from typing import Iterable
 
 
 # ---------------------------------------------------------------------------
-# BLE GATT UUIDs & Framing Constants
+# Model Identifiers & BLE GATT UUIDs / Framing Constants
 # ---------------------------------------------------------------------------
 
+MODEL_M60 = "m60"
+MODEL_M90 = "m90"
+SUPPORTED_MODELS = frozenset({MODEL_M60, MODEL_M90})
+
+
+def normalize_model(model: str | None) -> str:
+    key = (model or MODEL_M60).strip().lower()
+    if key in {"m90", "edifier m90"}:
+        return MODEL_M90
+    if key in {"m60", "edifier m60", ""}:
+        return MODEL_M60
+    raise ProtocolError(f"Unsupported speaker model: {model!r}")
+
+
 CONNEX_ADVERTISING_SERVICE_UUID = "0000f600-0000-1000-8000-00805f9b34fb"
+M60_CONNEX_ADVERTISING_SERVICE_UUID = CONNEX_ADVERTISING_SERVICE_UUID
+M90_CONNEX_ADVERTISING_SERVICE_UUID = "00004503-0000-1000-8000-00805f9b34fb"
+
 M60_GATT_SERVICE_UUID = "4809f601-1a48-11e9-ab14-d663bd873d93"
+M90_GATT_SERVICE_UUID = "48094503-1a48-11e9-ab14-d663bd873d93"
 M60_NOTIFY_CHAR_UUID = "48090001-1a48-11e9-ab14-d663bd873d93"
 M60_WRITE_CHAR_UUID = "48090002-1a48-11e9-ab14-d663bd873d93"
+EDIFIER_NOTIFY_CHAR_UUID = M60_NOTIFY_CHAR_UUID
+EDIFIER_WRITE_CHAR_UUID = M60_WRITE_CHAR_UUID
 
 HEADER_HOST_REQUEST = 0xAA
 HEADER_SPEAKER_REPLY = 0xBB
 HEADER_SETTER_ALT_ACK = 0xCC
 HEADER_MAGIC = 0xEC
+HEADER_MAGIC_ED = 0xED
+VALID_MAGIC_BYTES = frozenset({HEADER_MAGIC, HEADER_MAGIC_ED})
 
 VALID_REPLY_HEADERS = frozenset({HEADER_SPEAKER_REPLY, HEADER_SETTER_ALT_ACK})
 VALID_ALL_HEADERS = frozenset(
@@ -33,17 +56,26 @@ VALID_ALL_HEADERS = frozenset(
 )
 
 MAX_VOLUME = 16
+M90_MAX_VOLUME = 50
 M60_INPUT_GROUP = 0x0F
+M90_INPUT_GROUP = 0x1D
 MAX_DEVICE_NAME_BYTES = 35
 
 DEFAULT_BAND_FREQS = (62, 250, 1000, 4000, 8000, 16000)
+M90_DEFAULT_BAND_FREQS = (62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000)
 MIN_EQ_GAIN_CODE = 0x00  # -3.0 dB
 ZERO_EQ_GAIN_CODE = 0x06  # 0.0 dB
 MAX_EQ_GAIN_CODE = 0x0C  # +3.0 dB
 DEFAULT_Q_RAW = 0x07
 
 
+def max_volume_for_model(model: str) -> int:
+    return M90_MAX_VOLUME if normalize_model(model) == MODEL_M90 else MAX_VOLUME
+
+
 class Opcode(IntEnum):
+    QUERY_SUB_OUT = 0x13  # M90, 0xED magic
+    SET_SUB_OUT = 0x14  # M90, 0xED magic
     QUERY_CUSTOM_EQ = 0x43
     SET_CUSTOM_EQ_BAND = 0x44
     SET_CUSTOM_EQ_META = 0x47
@@ -54,10 +86,16 @@ class Opcode(IntEnum):
     QUERY_VOLUME = 0x66
     SET_VOLUME = 0x67
     QUERY_AUDIO_DECODING = 0x68
+    QUERY_MULTIPOINT = 0x7C  # M90
+    SET_MULTIPOINT = 0x7D  # M90
     QUERY_SMART_LIGHT = 0x84
     SET_SMART_LIGHT = 0x85
     QUERY_PROMPT_TONE = 0x86
     SET_PROMPT_TONE = 0x87
+    QUERY_CODEC_M90 = 0x91  # M90
+    SET_CODEC_M90 = 0x92  # M90
+    QUERY_POWER_SAVE = 0xB1  # M90
+    SET_POWER_SAVE = 0xB2  # M90
     MEDIA_PLAYBACK = 0xC2
     QUERY_A2DP_STATE = 0xC3
     SET_EQ_PRESET = 0xC4
@@ -66,6 +104,10 @@ class Opcode(IntEnum):
     QUERY_NAME = 0xC9
     SET_NAME = 0xCA
     DISCONNECT_BT_AUDIO = 0xCD
+    POWER_OFF_DEVICE = 0xCE  # M90
+    SET_TIMED_OFF = 0xD1  # M90
+    CANCEL_TIMED_OFF = 0xD2  # M90
+    QUERY_TIMED_OFF = 0xD3  # M90
     QUERY_EQ_PRESET = 0xD5
     QUERY_CAPABILITIES = 0xD8
 
@@ -96,6 +138,45 @@ class InputSource(IntEnum):
         key = value.strip().lower()
         if key not in mapping:
             raise ValueError(f"Unsupported input source: {value!r}")
+        return mapping[key]
+
+
+class M90InputSource(IntEnum):
+    BLUETOOTH = 0x01
+    USB = 0x02
+    HDMI = 0x03
+    OPTICAL = 0x04
+    AUX = 0x05
+
+    @property
+    def label(self) -> str:
+        return {
+            M90InputSource.BLUETOOTH: "bluetooth",
+            M90InputSource.USB: "usb",
+            M90InputSource.HDMI: "hdmi",
+            M90InputSource.OPTICAL: "optical",
+            M90InputSource.AUX: "aux",
+        }[self]
+
+    @classmethod
+    def from_str(cls, value: str) -> "M90InputSource":
+        mapping = {
+            "bluetooth": cls.BLUETOOTH,
+            "bt": cls.BLUETOOTH,
+            "usb": cls.USB,
+            "usb-c": cls.USB,
+            "usbc": cls.USB,
+            "hdmi": cls.HDMI,
+            "hdmi-arc": cls.HDMI,
+            "arc": cls.HDMI,
+            "optical": cls.OPTICAL,
+            "opt": cls.OPTICAL,
+            "toslink": cls.OPTICAL,
+            "aux": cls.AUX,
+        }
+        key = value.strip().lower()
+        if key not in mapping:
+            raise ValueError(f"Unsupported M90 input source: {value!r}")
         return mapping[key]
 
 
@@ -130,6 +211,65 @@ class EqPreset(IntEnum):
         key = value.strip().lower()
         if key not in mapping:
             raise ValueError(f"Unsupported EQ preset: {value!r}")
+        return mapping[key]
+
+
+class M90EqPreset(IntEnum):
+    CLASSIC = 0x00
+    MONITOR = 0x01
+    DYNAMIC = 0x02
+    CUSTOM = 0x03
+
+    @property
+    def label(self) -> str:
+        return {
+            M90EqPreset.CLASSIC: "classic",
+            M90EqPreset.MONITOR: "monitor",
+            M90EqPreset.DYNAMIC: "dynamic",
+            M90EqPreset.CUSTOM: "custom",
+        }[self]
+
+    @classmethod
+    def from_str(cls, value: str) -> "M90EqPreset":
+        mapping = {
+            "classic": cls.CLASSIC,
+            "music": cls.CLASSIC,
+            "monitor": cls.MONITOR,
+            "dynamic": cls.DYNAMIC,
+            "custom": cls.CUSTOM,
+            "customized": cls.CUSTOM,
+        }
+        key = value.strip().lower()
+        if key not in mapping:
+            raise ValueError(f"Unsupported M90 EQ preset: {value!r}")
+        return mapping[key]
+
+
+class SubOutLevel(IntEnum):
+    LOW = 0x00
+    MEDIUM = 0x01
+    HIGH = 0x02
+
+    @property
+    def label(self) -> str:
+        return {
+            SubOutLevel.LOW: "low",
+            SubOutLevel.MEDIUM: "medium",
+            SubOutLevel.HIGH: "high",
+        }[self]
+
+    @classmethod
+    def from_str(cls, value: str) -> "SubOutLevel":
+        mapping = {
+            "low": cls.LOW,
+            "medium": cls.MEDIUM,
+            "med": cls.MEDIUM,
+            "mid": cls.MEDIUM,
+            "high": cls.HIGH,
+        }
+        key = value.strip().lower()
+        if key not in mapping:
+            raise ValueError(f"Unsupported Sub Out level: {value!r}")
         return mapping[key]
 
 
@@ -254,6 +394,7 @@ class Frame:
     opcode: int
     payload: bytes
     raw: bytes
+    magic: int = HEADER_MAGIC
 
     @property
     def hex_str(self) -> str:
@@ -306,6 +447,21 @@ class EqBand:
             ]
         )
 
+    def to_m90_bytes(self) -> bytes:
+        if not 0 <= self.index <= 8:
+            raise ProtocolError(f"M90 band index must be 0..8, got {self.index}")
+        if not 0 <= self.freq <= 0xFFFF:
+            raise ProtocolError(f"Frequency out of range: {self.freq}")
+        gain_code = max(MIN_EQ_GAIN_CODE, min(MAX_EQ_GAIN_CODE, self.gain_code))
+        return bytes(
+            [
+                self.index & 0xFF,
+                (self.freq >> 8) & 0xFF,
+                self.freq & 0xFF,
+                gain_code & 0xFF,
+            ]
+        )
+
     @classmethod
     def from_bytes(cls, data: bytes) -> "EqBand":
         if len(data) != 6:
@@ -317,6 +473,19 @@ class EqBand:
             freq=(freq_hi << 8) | freq_lo,
             gain_code=gain_code,
             q_raw=q_raw,
+        )
+
+    @classmethod
+    def from_m90_bytes(cls, data: bytes) -> "EqBand":
+        if len(data) != 4:
+            raise ProtocolError(f"Expected 4-byte M90 EQ record, got {len(data)}")
+        index, freq_hi, freq_lo, gain_code = data
+        return cls(
+            index=index,
+            freq=(freq_hi << 8) | freq_lo,
+            gain_code=gain_code,
+            q_raw=DEFAULT_Q_RAW,
+            filter_raw=0x00,
         )
 
     def to_dict(self) -> dict:
@@ -346,10 +515,15 @@ class CustomEqState:
         }
 
 
-def default_custom_eq_bands() -> list[EqBand]:
+def default_custom_eq_bands(model: str = MODEL_M60) -> list[EqBand]:
+    freqs = (
+        M90_DEFAULT_BAND_FREQS
+        if normalize_model(model) == MODEL_M90
+        else DEFAULT_BAND_FREQS
+    )
     return [
         EqBand(index=i, freq=freq, gain_code=ZERO_EQ_GAIN_CODE, q_raw=DEFAULT_Q_RAW)
-        for i, freq in enumerate(DEFAULT_BAND_FREQS)
+        for i, freq in enumerate(freqs)
     ]
 
 
@@ -370,14 +544,17 @@ def build_frame(
     opcode: int,
     payload: bytes = b"",
     direction: int = HEADER_HOST_REQUEST,
+    magic: int = HEADER_MAGIC,
 ) -> bytes:
     if direction not in VALID_ALL_HEADERS:
         raise ProtocolError(f"Invalid frame header byte: 0x{direction:02X}")
+    if magic not in VALID_MAGIC_BYTES:
+        raise ProtocolError(f"Invalid frame magic byte: 0x{magic:02X}")
     length = len(payload)
     body = bytes(
         [
             direction & 0xFF,
-            HEADER_MAGIC,
+            magic & 0xFF,
             opcode & 0xFF,
             (length >> 8) & 0xFF,
             length & 0xFF,
@@ -390,7 +567,7 @@ def parse_frame(raw: bytes) -> Frame:
     if len(raw) < 6:
         raise ProtocolError(f"Frame too short ({len(raw)} bytes)")
     direction, magic, opcode, len_hi, len_lo = raw[:5]
-    if direction not in VALID_ALL_HEADERS or magic != HEADER_MAGIC:
+    if direction not in VALID_ALL_HEADERS or magic not in VALID_MAGIC_BYTES:
         raise ProtocolError(f"Invalid header: {raw[:2].hex(' ').upper()}")
     payload_len = (len_hi << 8) | len_lo
     expected_len = 5 + payload_len + 1
@@ -409,6 +586,7 @@ def parse_frame(raw: bytes) -> Frame:
         opcode=opcode,
         payload=bytes(raw[5:-1]),
         raw=bytes(raw),
+        magic=magic,
     )
 
 
@@ -460,7 +638,10 @@ class FrameReassembler:
 
     def _find_header_index(self) -> int:
         for i in range(len(self._buf) - 1):
-            if self._buf[i] in self._allowed_headers and self._buf[i + 1] == HEADER_MAGIC:
+            if (
+                self._buf[i] in self._allowed_headers
+                and self._buf[i + 1] in VALID_MAGIC_BYTES
+            ):
                 return i
         return -1
 
@@ -499,17 +680,24 @@ def cmd_query_input() -> bytes:
     return build_frame(Opcode.QUERY_INPUT)
 
 
-def cmd_set_input(source: InputSource) -> bytes:
-    return build_frame(Opcode.SET_INPUT, bytes([M60_INPUT_GROUP, int(source)]))
+def cmd_set_input(
+    source: InputSource | M90InputSource, model: str = MODEL_M60
+) -> bytes:
+    group = (
+        M90_INPUT_GROUP
+        if isinstance(source, M90InputSource) or normalize_model(model) == MODEL_M90
+        else M60_INPUT_GROUP
+    )
+    return build_frame(Opcode.SET_INPUT, bytes([group, int(source)]))
 
 
 def cmd_query_volume() -> bytes:
     return build_frame(Opcode.QUERY_VOLUME)
 
 
-def cmd_set_volume(level: int) -> bytes:
-    if not 0 <= level <= MAX_VOLUME:
-        raise ProtocolError(f"M60 volume must be 0..{MAX_VOLUME}, got {level}")
+def cmd_set_volume(level: int, max_volume: int = MAX_VOLUME) -> bytes:
+    if not 0 <= level <= max_volume:
+        raise ProtocolError(f"Volume must be 0..{max_volume}, got {level}")
     return build_frame(Opcode.SET_VOLUME, bytes([level]))
 
 
@@ -521,7 +709,7 @@ def cmd_query_eq_preset() -> bytes:
     return build_frame(Opcode.QUERY_EQ_PRESET)
 
 
-def cmd_set_eq_preset(preset: EqPreset) -> bytes:
+def cmd_set_eq_preset(preset: EqPreset | M90EqPreset) -> bytes:
     return build_frame(Opcode.SET_EQ_PRESET, bytes([int(preset)]))
 
 
@@ -529,8 +717,13 @@ def cmd_query_custom_eq() -> bytes:
     return build_frame(Opcode.QUERY_CUSTOM_EQ)
 
 
-def cmd_set_custom_eq_band(band: EqBand) -> bytes:
-    return build_frame(Opcode.SET_CUSTOM_EQ_BAND, band.to_bytes())
+def cmd_set_custom_eq_band(band: EqBand, model: str = MODEL_M60) -> bytes:
+    raw_band = (
+        band.to_m90_bytes()
+        if normalize_model(model) == MODEL_M90
+        else band.to_bytes()
+    )
+    return build_frame(Opcode.SET_CUSTOM_EQ_BAND, raw_band)
 
 
 def cmd_set_custom_eq_meta(name: str = "", timestamp: int | None = None) -> bytes:
@@ -579,6 +772,66 @@ def cmd_disconnect_bt_audio() -> bytes:
     return build_frame(Opcode.DISCONNECT_BT_AUDIO)
 
 
+def cmd_query_codec_m90() -> bytes:
+    return build_frame(Opcode.QUERY_CODEC_M90)
+
+
+def cmd_set_codec_m90(ldac_mode: LdacMode, lhdc: int = 0xFF) -> bytes:
+    return build_frame(
+        Opcode.SET_CODEC_M90, bytes([0x0E, int(ldac_mode), lhdc & 0xFF])
+    )
+
+
+def cmd_query_sub_out() -> bytes:
+    return build_frame(Opcode.QUERY_SUB_OUT, magic=HEADER_MAGIC_ED)
+
+
+def cmd_set_sub_out(level: SubOutLevel) -> bytes:
+    return build_frame(
+        Opcode.SET_SUB_OUT, bytes([0x00, int(level)]), magic=HEADER_MAGIC_ED
+    )
+
+
+def cmd_query_multipoint() -> bytes:
+    return build_frame(Opcode.QUERY_MULTIPOINT)
+
+
+def cmd_set_multipoint(enabled: bool) -> bytes:
+    return build_frame(
+        Opcode.SET_MULTIPOINT, bytes([0x00, 0x01 if enabled else 0x00])
+    )
+
+
+def cmd_query_power_save() -> bytes:
+    return build_frame(Opcode.QUERY_POWER_SAVE)
+
+
+def cmd_set_power_save(enabled: bool) -> bytes:
+    return build_frame(Opcode.SET_POWER_SAVE, bytes([0x01 if enabled else 0x00]))
+
+
+def cmd_query_timed_off() -> bytes:
+    return build_frame(Opcode.QUERY_TIMED_OFF)
+
+
+def cmd_set_timed_off(minutes: int) -> bytes:
+    if not 0 <= minutes <= 0xFFFF:
+        raise ProtocolError(f"Timed off minutes must be 0..65535, got {minutes}")
+    if minutes == 0:
+        return cmd_cancel_timed_off()
+    return build_frame(
+        Opcode.SET_TIMED_OFF, bytes([(minutes >> 8) & 0xFF, minutes & 0xFF])
+    )
+
+
+def cmd_cancel_timed_off() -> bytes:
+    return build_frame(Opcode.CANCEL_TIMED_OFF)
+
+
+def cmd_power_off_device() -> bytes:
+    return build_frame(Opcode.POWER_OFF_DEVICE)
+
+
 # ---------------------------------------------------------------------------
 # Typed Payload Decoders
 # ---------------------------------------------------------------------------
@@ -607,11 +860,19 @@ def decode_capabilities(payload: bytes) -> dict:
     }
 
 
-def decode_input(payload: bytes) -> InputSource:
+def decode_input(
+    payload: bytes, model: str = MODEL_M60
+) -> InputSource | M90InputSource:
+    if len(payload) >= 2 and payload[0] == M90_INPUT_GROUP:
+        return M90InputSource(payload[1])
     if len(payload) >= 2 and payload[0] == M60_INPUT_GROUP:
         return InputSource(payload[1])
     if len(payload) == 1:
-        return InputSource(payload[0])
+        return (
+            M90InputSource(payload[0])
+            if normalize_model(model) == MODEL_M90
+            else InputSource(payload[0])
+        )
     raise ProtocolError(f"Unexpected input payload: {payload.hex(' ')}")
 
 
@@ -621,10 +882,16 @@ def decode_volume(payload: bytes) -> tuple[int, int]:
     return int(payload[0]), int(payload[1])
 
 
-def decode_eq_preset(payload: bytes) -> EqPreset:
+def decode_eq_preset(
+    payload: bytes, model: str = MODEL_M60
+) -> EqPreset | M90EqPreset:
     if not payload:
         raise ProtocolError("Empty EQ preset payload")
-    return EqPreset(payload[0])
+    return (
+        M90EqPreset(payload[0])
+        if normalize_model(model) == MODEL_M90
+        else EqPreset(payload[0])
+    )
 
 
 def decode_custom_eq(payload: bytes) -> CustomEqState:
@@ -632,15 +899,26 @@ def decode_custom_eq(payload: bytes) -> CustomEqState:
         raise ProtocolError(f"Custom EQ payload too short: {len(payload)} bytes")
     fmt = payload[0]
     band_count = payload[1]
-    bands_end = 2 + band_count * 6
+    is_m90_format = fmt == 0x10 or (
+        band_count == 9
+        and len(payload) >= 2 + band_count * 4
+        and len(payload) < 2 + band_count * 6
+    )
+    record_size = 4 if is_m90_format else 6
+    bands_end = 2 + band_count * record_size
     if len(payload) < bands_end:
         raise ProtocolError(
             f"Truncated custom EQ bands: expected {bands_end} bytes, got {len(payload)}"
         )
     bands: list[EqBand] = []
     for i in range(band_count):
-        offset = 2 + i * 6
-        bands.append(EqBand.from_bytes(payload[offset : offset + 6]))
+        offset = 2 + i * record_size
+        chunk = payload[offset : offset + record_size]
+        bands.append(
+            EqBand.from_m90_bytes(chunk)
+            if is_m90_format
+            else EqBand.from_bytes(chunk)
+        )
 
     ts: int | None = None
     name = ""
@@ -656,6 +934,44 @@ def decode_ldac(payload: bytes) -> LdacMode:
     if not payload:
         raise ProtocolError("Empty LDAC payload")
     return LdacMode(payload[0])
+
+
+def decode_codec_m90(payload: bytes) -> LdacMode:
+    if len(payload) >= 2 and payload[0] == 0x0E:
+        return LdacMode(payload[1])
+    if len(payload) == 1:
+        return LdacMode(payload[0])
+    raise ProtocolError(f"Unexpected M90 codec payload: {payload.hex(' ')}")
+
+
+def decode_sub_out(payload: bytes) -> SubOutLevel:
+    if len(payload) >= 2:
+        return SubOutLevel(payload[1])
+    if len(payload) == 1:
+        return SubOutLevel(payload[0])
+    raise ProtocolError("Empty Sub Out payload")
+
+
+def decode_multipoint(payload: bytes) -> bool:
+    if len(payload) >= 2:
+        return payload[1] != 0
+    if len(payload) == 1:
+        return payload[0] != 0
+    raise ProtocolError("Empty multipoint payload")
+
+
+def decode_power_save(payload: bytes) -> bool:
+    if len(payload) >= 2:
+        return payload[1] != 0
+    if len(payload) == 1:
+        return payload[0] != 0
+    raise ProtocolError("Empty power save payload")
+
+
+def decode_timed_off(payload: bytes) -> int:
+    if len(payload) < 2:
+        raise ProtocolError(f"Expected 2-byte timed-off payload, got {payload.hex(' ')}")
+    return (payload[0] << 8) | payload[1]
 
 
 def decode_prompt_tone(payload: bytes) -> bool:

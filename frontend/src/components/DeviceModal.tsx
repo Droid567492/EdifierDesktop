@@ -72,7 +72,7 @@ export function DeviceModal({
         <div className="card-header">
           <h2 className="card-title">
             <Bluetooth size={16} color="#f59e0b" />
-            Connect Edifier M60 (BLE)
+            Connect Edifier M60 / M90 (BLE)
           </h2>
           <button className="btn btn-icon" onClick={onClose} aria-label="Close">
             <X size={16} />
@@ -86,7 +86,7 @@ export function DeviceModal({
             icon={<Info size={15} />}
             message={
               <span style={{ fontSize: 12 }}>
-                <strong>Connection tips:</strong> The M60 allows only{' '}
+                <strong>Connection tips:</strong> Edifier M60 and M90 speakers allow only{' '}
                 <strong>one BLE connection at a time</strong> — close the EDIFIER
                 ConneX phone app first. If the speaker isn&apos;t advertising while
                 idle, wake it by playing audio or toggling Bluetooth/power.
@@ -100,7 +100,7 @@ export function DeviceModal({
           <div className="device-row edifier">
             <div>
               <div style={{ fontWeight: 600 }}>
-                Last Device: {lastName || 'Edifier M60'}
+                Last Device: {lastName || 'Edifier Speaker'}
               </div>
               <div className="mono" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
                 {lastAddress}
@@ -172,7 +172,11 @@ export function DeviceModal({
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600 }}>
                   <span>{dev.name}</span>
-                  {dev.is_edifier && <span className="badge hires">EDIFIER</span>}
+                  {dev.is_edifier && (
+                    <span className="badge hires">
+                      {dev.model ? `EDIFIER ${dev.model.toUpperCase()}` : 'EDIFIER'}
+                    </span>
+                  )}
                 </div>
                 <div className="mono" style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
                   {dev.address} {dev.rssi !== null ? `• ${dev.rssi} dBm` : ''}

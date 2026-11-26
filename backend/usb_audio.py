@@ -1,4 +1,4 @@
-"""Windows USB-C UAC audio endpoint detection & volume control for Edifier M60."""
+"""USB-C UAC audio endpoint detection & volume control for Edifier M60 / M90."""
 
 from __future__ import annotations
 
@@ -36,8 +36,8 @@ class UsbAudioStatus:
     usb_pnp_name: str | None = None
     hid_interfaces: list[dict[str, str]] = field(default_factory=list)
     protocol_note: str = (
-        "Edifier M60 USB-C exposes standard UAC1 stereo PCM audio (VID 2D99 / PID A094). "
-        "EQ, input switching, and smart light are controlled over BLE concurrently while USB-C plays audio."
+        "Edifier M60 / M90 USB-C exposes standard UAC stereo PCM audio (VID 2D99). "
+        "EQ, input switching, and speaker settings are controlled over BLE concurrently while USB-C plays audio."
     )
     error: str | None = None
 
@@ -47,7 +47,15 @@ class UsbAudioStatus:
 
 def _matches_m60(name: str) -> bool:
     low = name.lower()
-    return ("edifier" in low and "m60" in low) or "edifier m60" in low
+    return (
+        ("edifier" in low and ("m60" in low or "m90" in low))
+        or "edifier m60" in low
+        or "edifier m90" in low
+    )
+
+
+def _matches_edifier_speaker(name: str) -> bool:
+    return _matches_m60(name)
 
 
 def is_m60_usb_audio_device(dev: Any) -> bool:
@@ -79,16 +87,24 @@ def is_m60_usb_audio_device(dev: Any) -> bool:
     if any(bt in hw_blob for bt in ("bthenum", "bthle", "bluetooth")):
         return False
 
-    if "vid_2d99" in hw_blob and "pid_a094" in hw_blob:
+    if "vid_2d99" in hw_blob and (
+        "pid_a094" in hw_blob
+        or "m90" in friendly.lower()
+        or "m60" in friendly.lower()
+        or "edifier" in friendly.lower()
+    ):
         return True
 
     return _matches_m60(friendly)
 
 
+is_edifier_usb_audio_device = is_m60_usb_audio_device
+
+
 def filter_m60_usb_pnp_items(
     items: list[dict[str, Any]],
 ) -> tuple[bool, str | None, list[dict[str, str]]]:
-    """Filter Windows PnP query rows to active Edifier M60 USB devices only."""
+    """Filter Windows PnP query rows to active Edifier M60 / M90 USB devices only."""
     pnp_name: str | None = None
     interfaces: list[dict[str, str]] = []
     for item in items:
@@ -96,11 +112,20 @@ def filter_m60_usb_pnp_items(
             continue
         iid = str(item.get("InstanceId") or "")
         status = str(item.get("Status") or "")
-        if not iid.upper().startswith(f"USB\\VID_{EDIFIER_USB_VID}&PID_{EDIFIER_M60_USB_PID}"):
+        iid_upper = iid.upper()
+        if not iid_upper.startswith(f"USB\\VID_{EDIFIER_USB_VID}&"):
+            continue
+        fname = str(item.get("FriendlyName") or "")
+        low_fname = fname.lower()
+        if (
+            f"PID_{EDIFIER_M60_USB_PID}" not in iid_upper
+            and "edifier" not in low_fname
+            and "m90" not in low_fname
+            and "m60" not in low_fname
+        ):
             continue
         if status.upper() != "OK":
             continue
-        fname = str(item.get("FriendlyName") or "")
         cls = str(item.get("Class") or "")
         if fname and pnp_name is None:
             pnp_name = fname
@@ -115,12 +140,15 @@ def filter_m60_usb_pnp_items(
     return len(interfaces) > 0, pnp_name, interfaces
 
 
+filter_edifier_usb_pnp_items = filter_m60_usb_pnp_items
+
+
 def _probe_usb_pnp_windows() -> tuple[bool, str | None, list[dict[str, str]]]:
-    """Query Windows PnP devices for Edifier M60 VID_2D99&PID_A094 (non-blocking best effort)."""
+    """Query Windows PnP devices for Edifier M60 / M90 VID_2D99 (non-blocking best effort)."""
     try:
         ps_cmd = (
             "Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | "
-            "Where-Object { $_.InstanceId -match '^USB\\\\VID_2D99&PID_A094' -and $_.Status -eq 'OK' } | "
+            "Where-Object { $_.InstanceId -match '^USB\\\\VID_2D99&' -and $_.Status -eq 'OK' } | "
             "Select-Object Status, Class, FriendlyName, InstanceId | ConvertTo-Json -Compress"
         )
         proc = subprocess.run(
@@ -219,7 +247,7 @@ def _get_endpoint_and_status_sync(include_pnp: bool = False) -> UsbAudioStatus:
 
 
 def parse_linux_pactl_sinks(output: str) -> str | None:
-    """Return the pactl sink name for an Edifier M60 USB-C sink (never Bluetooth)."""
+    """Return the pactl sink name for an Edifier M60 / M90 USB-C sink (never Bluetooth)."""
     for line in output.splitlines():
         parts = line.split("\t")
         if len(parts) < 2:
@@ -230,7 +258,11 @@ def parse_linux_pactl_sinks(output: str) -> str | None:
             continue
         if not ("alsa_output.usb-" in low or "usb-" in low):
             continue
-        if ("edifier" in low and "m60" in low) or "2d99" in low or "bestechnic" in low:
+        if (
+            ("edifier" in low and ("m60" in low or "m90" in low))
+            or "2d99" in low
+            or "bestechnic" in low
+        ):
             return sink_name
     return None
 
@@ -266,13 +298,21 @@ def _probe_usb_sysfs_linux() -> tuple[bool, str | None, list[dict[str, str]]]:
                 continue
             vid = vid_file.read_text(encoding="utf-8", errors="ignore").strip().upper()
             pid = pid_file.read_text(encoding="utf-8", errors="ignore").strip().upper()
-            if vid == EDIFIER_USB_VID and pid == EDIFIER_M60_USB_PID:
+            if vid == EDIFIER_USB_VID:
                 prod_file = dev_dir / "product"
                 prod = (
                     prod_file.read_text(encoding="utf-8", errors="ignore").strip()
                     if prod_file.exists()
-                    else "EDIFIER M60"
+                    else "EDIFIER USB"
                 )
+                low_prod = prod.lower()
+                if (
+                    pid != EDIFIER_M60_USB_PID
+                    and "edifier" not in low_prod
+                    and "m60" not in low_prod
+                    and "m90" not in low_prod
+                ):
+                    continue
                 if pnp_name is None:
                     pnp_name = prod
                 interfaces.append(

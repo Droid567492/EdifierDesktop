@@ -92,8 +92,8 @@ def set_autostart(enabled: bool) -> dict[str, Any]:
                 content = (
                     "[Desktop Entry]\n"
                     "Type=Application\n"
-                    "Name=Edifier M60 Studio Control\n"
-                    "Comment=Control Edifier M60 speakers over Bluetooth LE and USB-C\n"
+                    "Name=Edifier M60 / M90 Studio Control\n"
+                    "Comment=Control Edifier M60 / M90 speakers over Bluetooth LE and USB-C\n"
                     f"Exec={cmd}\n"
                     "Icon=edifier-m60-control\n"
                     "Terminal=false\n"

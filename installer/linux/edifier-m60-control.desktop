@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
-Name=Edifier M60 Studio Control
-Comment=Control Edifier M60 desktop speakers over Bluetooth LE and USB-C
+Name=Edifier M60 / M90 Studio Control
+Comment=Control Edifier M60 / M90 desktop speakers over Bluetooth LE and USB-C
 Exec=/usr/bin/edifier-m60-control
 Icon=edifier-m60-control
 Terminal=false

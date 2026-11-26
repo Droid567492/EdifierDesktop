@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { BookmarkPlus, RotateCcw, Sliders, Trash2 } from 'lucide-react'
-import type { BleState, EqBand, EqPreset, SavedEqPreset } from '../types'
+import type { BleState, EqBand, EqPreset, SavedEqPreset, SpeakerModel } from '../types'
 
 interface EqualizerCardProps {
   ble: BleState
@@ -11,16 +11,28 @@ interface EqualizerCardProps {
     bands: { index: number; gain_db: number; freq?: number; q_raw?: number }[],
     name?: string,
   ) => void
-  onSaveProfile: (name: string, gainsDb: number[], freqs: number[]) => void
+  onSaveProfile: (
+    name: string,
+    gainsDb: number[],
+    freqs: number[],
+    model: SpeakerModel,
+  ) => void
   onDeleteProfile: (id: string) => void
 }
 
-const PRESETS: { id: EqPreset; label: string }[] = [
+const M60_PRESETS: { id: EqPreset; label: string }[] = [
   { id: 'music', label: 'Music' },
   { id: 'monitor', label: 'Monitor' },
   { id: 'game', label: 'Game' },
   { id: 'movie', label: 'Movie' },
   { id: 'customized', label: 'Customized' },
+]
+
+const M90_PRESETS: { id: EqPreset; label: string }[] = [
+  { id: 'classic', label: 'Classic' },
+  { id: 'monitor', label: 'Monitor' },
+  { id: 'dynamic', label: 'Dynamic' },
+  { id: 'custom', label: 'Custom' },
 ]
 
 function formatFreq(hz: number): string {
@@ -42,12 +54,18 @@ export function EqualizerCard({
   const debounceRefs = useRef<Record<number, number>>({})
 
   useEffect(() => {
-    if (ble.custom_eq.bands.length === 6) {
+    if (ble.custom_eq.bands.length >= 6) {
       setDraftBands(ble.custom_eq.bands)
     }
   }, [ble.custom_eq.bands])
 
   const disabled = !ble.connected
+  const isM90 = ble.model === 'm90'
+  const presets = isM90 ? M90_PRESETS : M60_PRESETS
+  const isCustomActive = ble.eq_preset === 'customized' || ble.eq_preset === 'custom'
+  const visibleSavedPresets = savedPresets.filter(
+    (p) => (p.model ?? (p.freqs.length === 9 ? 'm90' : 'm60')) === ble.model,
+  )
 
   const handleSliderChange = (idx: number, gainDb: number) => {
     setDraftBands((prev) =>
@@ -116,17 +134,17 @@ export function EqualizerCard({
       <div className="card-header" style={{ flexWrap: 'wrap' }}>
         <h2 className="card-title">
           <Sliders size={15} color="#f59e0b" />
-          6-Band DSP Equalizer
+          {isM90 ? '9-Band DSP Equalizer' : '6-Band DSP Equalizer'}
         </h2>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-          {ble.custom_eq.name && ble.eq_preset === 'customized' && (
+          {ble.custom_eq.name && isCustomActive && (
             <span className="badge hires">Profile: {ble.custom_eq.name}</span>
           )}
           <button
             className="btn"
             disabled={disabled}
             onClick={handleFlatten}
-            title="Reset all 6 bands to 0.0 dB"
+            title={`Reset all ${draftBands.length} bands to 0.0 dB`}
           >
             <RotateCcw size={13} />
             Flatten 0 dB
@@ -135,13 +153,13 @@ export function EqualizerCard({
             className="btn"
             onClick={() => setShowAdvanced((s) => !s)}
           >
-            {showAdvanced ? 'Hide Freq/Q' : 'Freq / Q'}
+            {showAdvanced ? (isM90 ? 'Hide Freq' : 'Hide Freq/Q') : isM90 ? 'Freq (Hz)' : 'Freq / Q'}
           </button>
         </div>
       </div>
 
       <div className="preset-pills">
-        {PRESETS.map((p) => (
+        {presets.map((p) => (
           <button
             key={p.id}
             className={`preset-pill ${ble.eq_preset === p.id ? 'active' : ''}`}
@@ -206,8 +224,8 @@ export function EqualizerCard({
         </svg>
       </div>
 
-      {/* 6 Band Faders */}
-      <div className="eq-bands-grid">
+      {/* Band Faders */}
+      <div className={`eq-bands-grid ${isM90 ? 'nine-band' : ''}`}>
         {draftBands.map((band) => (
           <div key={band.index} className="eq-band-col">
             <span className="mono" style={{ fontSize: 12, fontWeight: 700, color: band.gain_db === 0 ? 'var(--text-secondary)' : 'var(--accent-amber)' }}>
@@ -252,27 +270,29 @@ export function EqualizerCard({
                   }
                   title="Center Frequency (Hz)"
                 />
-                <input
-                  type="number"
-                  className="text-input mono"
-                  style={{ width: '100%', padding: '3px 5px', fontSize: 11 }}
-                  value={band.q_raw}
-                  min={1}
-                  max={255}
-                  disabled={disabled}
-                  onChange={(e) => {
-                    const nextQ = Number(e.target.value)
-                    setDraftBands((prev) =>
-                      prev.map((b) =>
-                        b.index === band.index ? { ...b, q_raw: nextQ } : b,
-                      ),
-                    )
-                  }}
-                  onBlur={(e) =>
-                    onUpdateBand(band.index, band.gain_db, band.freq, Number(e.target.value))
-                  }
-                  title="Q-Factor raw register"
-                />
+                {!isM90 && (
+                  <input
+                    type="number"
+                    className="text-input mono"
+                    style={{ width: '100%', padding: '3px 5px', fontSize: 11 }}
+                    value={band.q_raw}
+                    min={1}
+                    max={255}
+                    disabled={disabled}
+                    onChange={(e) => {
+                      const nextQ = Number(e.target.value)
+                      setDraftBands((prev) =>
+                        prev.map((b) =>
+                          b.index === band.index ? { ...b, q_raw: nextQ } : b,
+                        ),
+                      )
+                    }}
+                    onBlur={(e) =>
+                      onUpdateBand(band.index, band.gain_db, band.freq, Number(e.target.value))
+                    }
+                    title="Q-Factor raw register"
+                  />
+                )}
               </div>
             )}
           </div>
@@ -295,7 +315,7 @@ export function EqualizerCard({
           <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginRight: 4 }}>
             Local Profiles:
           </span>
-          {savedPresets.map((p) => (
+          {visibleSavedPresets.map((p) => (
             <div
               key={p.id}
               style={{
@@ -345,6 +365,7 @@ export function EqualizerCard({
               profileName.trim(),
               draftBands.map((b) => b.gain_db),
               draftBands.map((b) => b.freq),
+              ble.model,
             )
             setProfileName('')
           }}

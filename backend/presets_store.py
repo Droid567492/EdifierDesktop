@@ -1,4 +1,4 @@
-"""Persistent local configuration and saved custom 6-band EQ profiles."""
+"""Persistent local configuration and saved custom EQ profiles (6-band M60 & 9-band M90)."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ class SavedEqProfile:
     name: str
     gains_db: list[float]
     freqs: list[int]
+    model: str = "m60"
     builtin: bool = False
 
 
@@ -26,6 +27,7 @@ DEFAULT_STARTER_PROFILES: list[dict] = [
     {
         "id": "builtin-flat",
         "name": "Flat Reference",
+        "model": "m60",
         "gains_db": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         "freqs": [62, 250, 1000, 4000, 8000, 16000],
         "builtin": True,
@@ -33,6 +35,7 @@ DEFAULT_STARTER_PROFILES: list[dict] = [
     {
         "id": "builtin-warm-desk",
         "name": "Warm Nearfield",
+        "model": "m60",
         "gains_db": [1.5, 0.5, 0.0, -0.5, 0.5, 0.5],
         "freqs": [62, 250, 1000, 4000, 8000, 16000],
         "builtin": True,
@@ -40,6 +43,7 @@ DEFAULT_STARTER_PROFILES: list[dict] = [
     {
         "id": "builtin-vocal",
         "name": "Vocal & Podcast",
+        "model": "m60",
         "gains_db": [-1.0, -0.5, 1.5, 2.0, 1.0, 0.0],
         "freqs": [62, 250, 1000, 4000, 8000, 16000],
         "builtin": True,
@@ -47,8 +51,41 @@ DEFAULT_STARTER_PROFILES: list[dict] = [
     {
         "id": "builtin-punch",
         "name": "Late-Night Punch",
+        "model": "m60",
         "gains_db": [2.5, 1.0, 0.0, 1.0, 1.5, 1.0],
         "freqs": [62, 250, 1000, 4000, 8000, 16000],
+        "builtin": True,
+    },
+    {
+        "id": "builtin-m90-flat",
+        "name": "Flat Reference",
+        "model": "m90",
+        "gains_db": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        "freqs": [62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
+        "builtin": True,
+    },
+    {
+        "id": "builtin-m90-warm-desk",
+        "name": "Warm Nearfield",
+        "model": "m90",
+        "gains_db": [1.5, 1.0, 0.5, 0.0, 0.0, -0.5, -0.5, 0.5, 0.5],
+        "freqs": [62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
+        "builtin": True,
+    },
+    {
+        "id": "builtin-m90-vocal",
+        "name": "Vocal & Podcast",
+        "model": "m90",
+        "gains_db": [-1.0, -1.0, -0.5, 0.5, 1.5, 2.0, 1.5, 1.0, 0.0],
+        "freqs": [62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
+        "builtin": True,
+    },
+    {
+        "id": "builtin-m90-punch",
+        "name": "Late-Night Punch",
+        "model": "m90",
+        "gains_db": [2.5, 2.0, 1.0, 0.0, 0.0, 0.5, 1.0, 1.5, 1.0],
+        "freqs": [62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
         "builtin": True,
     },
 ]
@@ -94,6 +131,24 @@ class PresetsStore:
             ):
                 self._data["saved_eq_presets"] = [dict(p) for p in DEFAULT_STARTER_PROFILES]
                 self._save_locked()
+            else:
+                changed = False
+                existing_ids = set()
+                for preset in self._data["saved_eq_presets"]:
+                    if isinstance(preset, dict):
+                        if "id" in preset:
+                            existing_ids.add(preset["id"])
+                        if "model" not in preset:
+                            preset["model"] = (
+                                "m90" if len(preset.get("freqs", [])) == 9 else "m60"
+                            )
+                            changed = True
+                for starter in DEFAULT_STARTER_PROFILES:
+                    if starter["id"] not in existing_ids:
+                        self._data["saved_eq_presets"].append(dict(starter))
+                        changed = True
+                if changed:
+                    self._save_locked()
 
     def _save_locked(self) -> None:
         try:
@@ -169,14 +224,25 @@ class PresetsStore:
             return [dict(p) for p in self._data.get("saved_eq_presets", [])]
 
     def save_eq_preset(
-        self, name: str, gains_db: list[float], freqs: list[int]
+        self,
+        name: str,
+        gains_db: list[float],
+        freqs: list[int],
+        model: str | None = None,
     ) -> dict:
         clean_name = name.strip() or "Custom Profile"
+        resolved_model = (
+            model.strip().lower()
+            if model
+            else ("m90" if len(freqs) == 9 or len(gains_db) == 9 else "m60")
+        )
+        max_bands = 9 if resolved_model == "m90" else 6
         profile = SavedEqProfile(
             id=f"user-{uuid.uuid4().hex[:8]}",
             name=clean_name[:32],
-            gains_db=[round(float(g), 1) for g in gains_db[:6]],
-            freqs=[int(f) for f in freqs[:6]],
+            gains_db=[round(float(g), 1) for g in gains_db[:max_bands]],
+            freqs=[int(f) for f in freqs[:max_bands]],
+            model=resolved_model,
             builtin=False,
         )
         with self._lock:

@@ -87,22 +87,26 @@ export function VolumeCard({
       </div>
 
       <div className="vol-steps" aria-label="Hardware volume step meter">
-        {Array.from({ length: ble.max_volume }, (_, idx) => {
-          const step = idx + 1
-          return (
-            <div
-              key={step}
-              className={`vol-step-bar ${step <= draftVol ? 'active' : ''}`}
-              onClick={() => {
-                if (!disabled) {
-                  setDraftVol(step)
-                  onSetVolume(step)
-                }
-              }}
-              title={`Set hardware volume to ${step}/${ble.max_volume}`}
-            />
-          )
-        })}
+        {Array.from(
+          { length: ble.max_volume > 25 ? 25 : Math.max(1, ble.max_volume) },
+          (_, idx) => {
+            const totalBars = ble.max_volume > 25 ? 25 : Math.max(1, ble.max_volume)
+            const step = Math.round(((idx + 1) / totalBars) * ble.max_volume)
+            return (
+              <div
+                key={idx}
+                className={`vol-step-bar ${draftVol >= step || (draftVol > 0 && idx === 0) ? 'active' : ''}`}
+                onClick={() => {
+                  if (!disabled) {
+                    setDraftVol(step)
+                    onSetVolume(step)
+                  }
+                }}
+                title={`Set hardware volume to ${step}/${ble.max_volume}`}
+              />
+            )
+          },
+        )}
       </div>
 
       <input
@@ -140,7 +144,7 @@ export function VolumeCard({
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 600 }}>
             <Usb size={14} color="#38bdf8" />
-            <span>Windows USB-C Audio Endpoint</span>
+            <span>OS USB-C Audio Endpoint</span>
             {usb.usb_vid_pid && (
               <span className="badge mono">{usb.usb_vid_pid}</span>
             )}
@@ -179,7 +183,7 @@ export function VolumeCard({
               <button
                 className="btn btn-cyan"
                 onClick={onLockBitPerfect}
-                title="Set Windows USB output to 100% and unmuted while controlling loudness on the M60 hardware amp"
+                title="Set OS USB output to 100% and unmuted while controlling loudness on the speaker hardware amp"
               >
                 <Lock size={13} />
                 100% Bit-Perfect
@@ -188,8 +192,8 @@ export function VolumeCard({
           </>
         ) : (
           <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-            Plug the M60 in via USB-C and switch input to USB-C to manage the Windows
-            WASAPI mixer alongside BLE hardware volume.
+            Plug the speaker in via USB-C and switch input to USB-C to manage the OS
+            USB mixer alongside BLE hardware volume.
           </div>
         )}
 
@@ -222,7 +226,7 @@ export function VolumeCard({
               }
             />
             <Keyboard size={13} />
-            <span>Bind PC Volume Keys → M60 Hardware Volume</span>
+            <span>Bind PC Volume Keys → Speaker Hardware Volume</span>
           </label>
           {settings.hotkey_sync_enabled && (
             <span className={`badge ${settings.hotkey_active ? 'ok' : ''}`}>

@@ -206,3 +206,80 @@ def test_updates_toggle_and_alert_dismiss_endpoints(tmp_path: Path) -> None:
         r = client.post("/api/settings/alerts/reset")
         assert r.status_code == 200
         assert r.json()["settings"]["dismissed_alerts"] == []
+
+
+def test_m90_demo_mode_full_control_flow(tmp_path: Path) -> None:
+    with _make_client(tmp_path) as client:
+        r = client.post("/api/demo", json={"enabled": True, "model": "m90"})
+        assert r.status_code == 200
+        ble = r.json()["ble_state"]
+        assert ble["connected"] is True
+        assert ble["demo_mode"] is True
+        assert ble["model"] == "m90"
+        assert ble["max_volume"] == 50
+        assert ble["device_name"] == "EDIFIER M90"
+        assert len(ble["custom_eq"]["bands"]) == 9
+
+        # M90 Volume (0..50)
+        r = client.post("/api/volume", json={"level": 38})
+        assert r.status_code == 200
+        assert r.json()["ble_state"]["volume"] == 38
+
+        r = client.post("/api/volume", json={"level": 51})
+        assert r.status_code == 422
+
+        # M90 5 Inputs
+        for src in ("hdmi", "optical", "bluetooth"):
+            r = client.post("/api/input", json={"source": src})
+            assert r.status_code == 200
+            assert r.json()["ble_state"]["input_source"] == src
+
+        # M90 EQ Presets & 9-band Custom EQ
+        r = client.post("/api/eq/preset", json={"preset": "dynamic"})
+        assert r.status_code == 200
+        assert r.json()["ble_state"]["eq_preset"] == "dynamic"
+
+        r = client.post("/api/eq/custom/band", json={"index": 8, "gain_db": 2.0})
+        assert r.status_code == 200
+        ble = r.json()["ble_state"]
+        assert ble["eq_preset"] == "custom"
+        assert ble["custom_eq"]["bands"][8]["gain_db"] == 2.0
+
+        # M90 hardware features: Sub Out, Multipoint, Power Save, Timed Off
+        r = client.post("/api/sub-out", json={"level": "high"})
+        assert r.status_code == 200
+        assert r.json()["ble_state"]["sub_out_level"] == "high"
+
+        r = client.post("/api/multipoint", json={"enabled": True})
+        assert r.status_code == 200
+        assert r.json()["ble_state"]["multipoint"] is True
+
+        r = client.post("/api/power-save", json={"enabled": False})
+        assert r.status_code == 200
+        assert r.json()["ble_state"]["power_save"] is False
+
+        r = client.post("/api/timed-off", json={"minutes": 30})
+        assert r.status_code == 200
+        assert r.json()["ble_state"]["timed_off_minutes"] == 30
+
+        r = client.post("/api/timed-off", json={"minutes": 0})
+        assert r.status_code == 200
+        assert r.json()["ble_state"]["timed_off_minutes"] == 0
+
+        # Save 9-band M90 local EQ profile
+        r = client.post(
+            "/api/eq/saved",
+            json={
+                "name": "M90 Curve",
+                "model": "m90",
+                "gains_db": [1.0, 0.5, 0.0, 0.0, 0.0, 0.5, 1.0, 0.5, 0.0],
+                "freqs": [62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
+            },
+        )
+        assert r.status_code == 200
+        assert len(r.json()["preset"]["freqs"]) == 9
+
+        # Remote shutdown
+        r = client.post("/api/device/power-off")
+        assert r.status_code == 200
+        assert "0xCE" in (r.json()["ble_state"]["notice"] or "")

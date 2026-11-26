@@ -1,8 +1,19 @@
 name: Feature Request
-description: Suggest a new feature or improvement for Edifier M60 Desktop Control
+description: Suggest a new feature or improvement for Edifier M60 / M90 Desktop Control
 title: "[Feature]: "
 labels: ["enhancement"]
 body:
+  - type: dropdown
+    id: speaker_model
+    attributes:
+      label: Speaker Model
+      options:
+        - Both / General (M60 & M90)
+        - Edifier M60
+        - Edifier M90
+    validations:
+      required: true
+
   - type: textarea
     id: summary
     attributes:

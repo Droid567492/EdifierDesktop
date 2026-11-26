@@ -21,16 +21,27 @@ export interface Capabilities {
   length: number
 }
 
-export type InputSource = 'bluetooth' | 'usb' | 'aux'
-export type EqPreset = 'music' | 'monitor' | 'game' | 'movie' | 'customized'
+export type SpeakerModel = 'm60' | 'm90'
+export type InputSource = 'bluetooth' | 'usb' | 'hdmi' | 'optical' | 'aux'
+export type EqPreset =
+  | 'music'
+  | 'monitor'
+  | 'game'
+  | 'movie'
+  | 'customized'
+  | 'classic'
+  | 'dynamic'
+  | 'custom'
 export type LdacMode = 'disabled' | '48khz' | '96khz'
 export type SmartLightTimer = '5s' | '10s' | '20s' | 'always_on'
 export type SmartLightSensitivity = 'high' | 'general' | 'low'
+export type SubOutLevel = 'low' | 'medium' | 'high'
 
 export interface BleState {
   connected: boolean
   connecting: boolean
   demo_mode: boolean
+  model: SpeakerModel
   address: string | null
   device_name: string
   firmware: string | null
@@ -46,6 +57,10 @@ export interface BleState {
   prompt_tone: boolean
   smart_light_timer: SmartLightTimer
   smart_light_sensitivity: SmartLightSensitivity
+  sub_out_level: SubOutLevel
+  multipoint: boolean
+  power_save: boolean
+  timed_off_minutes: number
   a2dp_state_code: number | null
   a2dp_state: string
   audio_decoding_code: number | null
@@ -79,6 +94,7 @@ export interface UsbState {
 export interface SavedEqPreset {
   id: string
   name: string
+  model?: SpeakerModel
   gains_db: number[]
   freqs: number[]
   builtin: boolean
@@ -137,6 +153,7 @@ export interface ScannedDevice {
   rssi: number | null
   service_uuids: string[]
   is_edifier: boolean
+  model?: SpeakerModel | null
 }
 
 export interface AppSnapshot {

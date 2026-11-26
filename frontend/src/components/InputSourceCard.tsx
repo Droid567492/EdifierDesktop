@@ -1,12 +1,14 @@
 import {
   Bluetooth,
   Cable,
+  Disc,
   Pause,
   Play,
   Radio,
   SkipBack,
   SkipForward,
   Sparkles,
+  Tv,
   Usb,
 } from 'lucide-react'
 import type { BleState, InputSource } from '../types'
@@ -17,9 +19,17 @@ interface InputSourceCardProps {
   onPlayback: (action: 'play' | 'pause' | 'next' | 'previous') => void
 }
 
-const SOURCES: { id: InputSource; label: string; sub: string; icon: typeof Bluetooth }[] = [
+const M60_SOURCES: { id: InputSource; label: string; sub: string; icon: typeof Bluetooth }[] = [
   { id: 'bluetooth', label: 'Bluetooth', sub: 'A2DP / LDAC', icon: Bluetooth },
   { id: 'usb', label: 'USB-C', sub: 'UAC PCM 48/96k', icon: Usb },
+  { id: 'aux', label: 'AUX In', sub: '3.5mm Analog', icon: Cable },
+]
+
+const M90_SOURCES: { id: InputSource; label: string; sub: string; icon: typeof Bluetooth }[] = [
+  { id: 'bluetooth', label: 'Bluetooth', sub: 'A2DP / LDAC', icon: Bluetooth },
+  { id: 'usb', label: 'USB-C', sub: 'UAC PCM', icon: Usb },
+  { id: 'hdmi', label: 'HDMI', sub: 'ARC Audio', icon: Tv },
+  { id: 'optical', label: 'Optical', sub: 'S/PDIF Toslink', icon: Disc },
   { id: 'aux', label: 'AUX In', sub: '3.5mm Analog', icon: Cable },
 ]
 
@@ -29,6 +39,7 @@ export function InputSourceCard({
   onPlayback,
 }: InputSourceCardProps) {
   const disabled = !ble.connected
+  const sources = ble.model === 'm90' ? M90_SOURCES : M60_SOURCES
   const isHiRes =
     ble.audio_decoding_code === 0x04 ||
     ble.audio_decoding_code === 0x05 ||
@@ -50,8 +61,8 @@ export function InputSourceCard({
         </div>
       </div>
 
-      <div className="source-grid">
-        {SOURCES.map(({ id, label, sub, icon: Icon }) => {
+      <div className={`source-grid ${ble.model === 'm90' ? 'five-col' : ''}`}>
+        {sources.map(({ id, label, sub, icon: Icon }) => {
           const active = ble.input_source === id
           return (
             <button

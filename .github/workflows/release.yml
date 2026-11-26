@@ -119,7 +119,7 @@ jobs:
         with:
           generate_release_notes: true
           body: |
-            > **Disclaimer:** This is an unofficial community tool for Edifier M60 speakers and was built using AI assistance. It is not affiliated with Edifier and is provided as-is.
+            > **Disclaimer:** This is an unofficial community tool for Edifier M60 & M90 speakers and was built using AI assistance. It is not affiliated with Edifier and is provided as-is.
 
             ### Downloads
             - **Windows Installer (`*-win64-setup.exe`)**: Recommended for Windows — installs shortcuts, uninstaller, and optional Start with Windows.

@@ -11,7 +11,13 @@ import {
   Speaker,
   Usb,
 } from 'lucide-react'
-import type { AppSettings, BleState, UpdateState, UsbState } from '../types'
+import type {
+  AppSettings,
+  BleState,
+  SpeakerModel,
+  UpdateState,
+  UsbState,
+} from '../types'
 
 interface TopBarProps {
   ble: BleState
@@ -22,7 +28,7 @@ interface TopBarProps {
   onOpenConnect: () => void
   onDisconnectBle: () => void
   onRefresh: () => void
-  onToggleDemo: () => void
+  onToggleDemo: (model: SpeakerModel) => void
   onToggleDiagnostics: () => void
   onToggleAutoCheckUpdates: (enabled: boolean) => void
   onCheckUpdatesNow: () => void
@@ -87,9 +93,12 @@ export function TopBar({
           <Speaker size={20} />
         </div>
         <div style={{ minWidth: 0 }}>
-          <h1 className="brand-title">Edifier M60 // Studio Control</h1>
+          <h1 className="brand-title">Edifier M60 / M90 // Studio Control</h1>
           <div className="brand-sub">
-            <span className="mono">{ble.device_name || 'EDIFIER M60'}</span>
+            <span className="mono">{ble.device_name || 'EDIFIER M60 / M90'}</span>
+            {ble.connected && (
+              <span className="badge mono">{(ble.model || 'm60').toUpperCase()}</span>
+            )}
             {ble.firmware && <span className="badge mono">FW {ble.firmware}</span>}
             {!wsConnected && <span className="badge">Reconnecting UI…</span>}
           </div>
@@ -103,7 +112,7 @@ export function TopBar({
           title={
             ble.connected
               ? 'Click to manage or disconnect BLE link'
-              : 'Scan and connect to Edifier M60 via Bluetooth LE'
+              : 'Scan and connect to Edifier M60 / M90 via Bluetooth LE'
           }
         >
           {ble.connected ? <BluetoothConnected size={14} /> : <Bluetooth size={14} />}
@@ -200,20 +209,38 @@ export function TopBar({
               <div className="dropdown-divider" />
 
               <button
-                className={`dropdown-item ${ble.demo_mode ? 'active-amber' : ''}`}
+                className={`dropdown-item ${ble.demo_mode && ble.model === 'm60' ? 'active-amber' : ''}`}
                 role="menuitemcheckbox"
-                aria-checked={ble.demo_mode}
+                aria-checked={ble.demo_mode && ble.model === 'm60'}
                 onClick={() => {
-                  onToggleDemo()
+                  onToggleDemo('m60')
                   setMenuOpen(false)
                 }}
               >
                 <span className="dropdown-item-label">
                   <Cpu size={14} />
-                  <span>Demo Mode</span>
+                  <span>Demo Mode: M60</span>
                 </span>
-                <span className={`badge ${ble.demo_mode ? 'hires' : ''}`}>
-                  {ble.demo_mode ? 'ON' : 'OFF'}
+                <span className={`badge ${ble.demo_mode && ble.model === 'm60' ? 'hires' : ''}`}>
+                  {ble.demo_mode && ble.model === 'm60' ? 'ON' : 'OFF'}
+                </span>
+              </button>
+
+              <button
+                className={`dropdown-item ${ble.demo_mode && ble.model === 'm90' ? 'active-amber' : ''}`}
+                role="menuitemcheckbox"
+                aria-checked={ble.demo_mode && ble.model === 'm90'}
+                onClick={() => {
+                  onToggleDemo('m90')
+                  setMenuOpen(false)
+                }}
+              >
+                <span className="dropdown-item-label">
+                  <Cpu size={14} />
+                  <span>Demo Mode: M90</span>
+                </span>
+                <span className={`badge ${ble.demo_mode && ble.model === 'm90' ? 'hires' : ''}`}>
+                  {ble.demo_mode && ble.model === 'm90' ? 'ON' : 'OFF'}
                 </span>
               </button>
 

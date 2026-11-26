@@ -1,4 +1,4 @@
-"""Opt-in Windows global media volume key hook -> M60 BLE hardware volume."""
+"""Opt-in Windows global media volume key hook -> Edifier M60 / M90 BLE hardware volume."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ HOTKEY_VOL_MUTE = 3
 
 
 class WindowsVolumeHotkeyBridge:
-    """Captures Windows Volume Up/Down/Mute keys when enabled and drives M60 BLE volume."""
+    """Captures Windows Volume Up/Down/Mute keys when enabled and drives Edifier BLE volume."""
 
     def __init__(
         self,

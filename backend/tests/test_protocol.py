@@ -3,55 +3,79 @@
 import pytest
 
 from backend.protocol import (
+    HEADER_MAGIC_ED,
     HEADER_SETTER_ALT_ACK,
     HEADER_SPEAKER_REPLY,
+    M90_DEFAULT_BAND_FREQS,
+    M90_MAX_VOLUME,
+    MODEL_M90,
     EqBand,
     EqPreset,
     FrameReassembler,
     InputSource,
     LdacMode,
+    M90EqPreset,
+    M90InputSource,
     Opcode,
     PlaybackAction,
     ProtocolError,
     SmartLightSensitivity,
     SmartLightTimer,
+    SubOutLevel,
     build_frame,
+    cmd_cancel_timed_off,
     cmd_disconnect_bt_audio,
     cmd_playback,
+    cmd_power_off_device,
     cmd_query_a2dp_state,
     cmd_query_audio_decoding,
     cmd_query_capabilities,
     cmd_query_classic_mac,
+    cmd_query_codec_m90,
     cmd_query_custom_eq,
     cmd_query_eq_preset,
     cmd_query_firmware,
     cmd_query_input,
     cmd_query_ldac,
+    cmd_query_multipoint,
     cmd_query_name,
+    cmd_query_power_save,
     cmd_query_prompt_tone,
     cmd_query_smart_light,
+    cmd_query_sub_out,
+    cmd_query_timed_off,
     cmd_query_volume,
+    cmd_set_codec_m90,
     cmd_set_custom_eq_band,
     cmd_set_custom_eq_meta,
     cmd_set_eq_preset,
     cmd_set_input,
     cmd_set_ldac,
+    cmd_set_multipoint,
     cmd_set_name,
+    cmd_set_power_save,
     cmd_set_prompt_tone,
     cmd_set_smart_light,
+    cmd_set_sub_out,
+    cmd_set_timed_off,
     cmd_set_volume,
     decode_a2dp_state,
     decode_audio_decoding,
     decode_capabilities,
     decode_classic_mac,
+    decode_codec_m90,
     decode_custom_eq,
     decode_eq_preset,
     decode_firmware,
     decode_input,
     decode_ldac,
+    decode_multipoint,
     decode_name,
+    decode_power_save,
     decode_prompt_tone,
     decode_smart_light,
+    decode_sub_out,
+    decode_timed_off,
     decode_volume,
     parse_frame,
 )
@@ -216,3 +240,84 @@ def test_custom_eq_decode_and_reassembler_fragmentation() -> None:
 
     meta = cmd_set_custom_eq_meta("Test", timestamp=1700000000)
     assert parse_frame(meta).opcode == Opcode.SET_CUSTOM_EQ_META
+
+
+def test_m90_exact_vectors_and_ed_magic() -> None:
+    # M90 Inputs (group 0x1D)
+    assert cmd_set_input(M90InputSource.BLUETOOTH, MODEL_M90) == hx("AA EC 62 00 02 1D 01 18")
+    assert cmd_set_input(M90InputSource.USB, MODEL_M90) == hx("AA EC 62 00 02 1D 02 19")
+    assert cmd_set_input(M90InputSource.HDMI, MODEL_M90) == hx("AA EC 62 00 02 1D 03 1A")
+    assert cmd_set_input(M90InputSource.OPTICAL, MODEL_M90) == hx("AA EC 62 00 02 1D 04 1B")
+    assert cmd_set_input(M90InputSource.AUX, MODEL_M90) == hx("AA EC 62 00 02 1D 05 1C")
+
+    assert decode_input(parse_frame(hx("BB EC 61 00 02 1D 01 28")).payload, MODEL_M90) == M90InputSource.BLUETOOTH
+    assert decode_input(parse_frame(hx("BB EC 61 00 02 1D 03 2A")).payload, MODEL_M90) == M90InputSource.HDMI
+    assert decode_input(parse_frame(hx("BB EC 61 00 02 1D 04 2B")).payload, MODEL_M90) == M90InputSource.OPTICAL
+
+    # M90 Volume (0..50 / 0x32)
+    assert cmd_set_volume(8, max_volume=M90_MAX_VOLUME) == hx("AA EC 67 00 01 08 06")
+    with pytest.raises(ProtocolError):
+        cmd_set_volume(51, max_volume=M90_MAX_VOLUME)
+    assert decode_volume(parse_frame(hx("BB EC 66 00 02 32 08 49")).payload) == (50, 8)
+
+    # M90 EQ Presets
+    assert cmd_set_eq_preset(M90EqPreset.CLASSIC) == hx("AA EC C4 00 01 00 5B")
+    assert decode_eq_preset(parse_frame(hx("BB EC D5 00 01 00 7D")).payload, MODEL_M90) == M90EqPreset.CLASSIC
+    assert decode_eq_preset(parse_frame(hx("BB EC D5 00 01 02 7F")).payload, MODEL_M90) == M90EqPreset.DYNAMIC
+
+    # M90 4-byte Custom EQ band 0
+    band0_up = EqBand.from_db(index=0, freq=62, gain_db=0.5)
+    assert cmd_set_custom_eq_band(band0_up, MODEL_M90) == hx("AA EC 44 00 04 00 00 3E 07 23")
+    band0_flat = EqBand.from_db(index=0, freq=62, gain_db=0.0)
+    assert cmd_set_custom_eq_band(band0_flat, MODEL_M90) == hx("AA EC 44 00 04 00 00 3E 06 22")
+
+    # Decode M90 9-band 0x10 09 payload
+    m90_bands = [
+        EqBand.from_db(i, freq, (i - 4) * 0.5)
+        for i, freq in enumerate(M90_DEFAULT_BAND_FREQS)
+    ]
+    m90_payload = bytearray([0x10, 0x09])
+    for b in m90_bands:
+        m90_payload.extend(b.to_m90_bytes())
+    eq_m90 = decode_custom_eq(bytes(m90_payload))
+    assert eq_m90.format_byte == 0x10
+    assert len(eq_m90.bands) == 9
+    assert eq_m90.bands[0].freq == 62 and eq_m90.bands[0].gain_db == -2.0
+    assert eq_m90.bands[8].freq == 16000 and eq_m90.bands[8].gain_db == 2.0
+
+    # M90 Codec / LDAC (0x91 / 0x92)
+    assert cmd_query_codec_m90() == hx("AA EC 91 00 00 27")
+    assert cmd_set_codec_m90(LdacMode.KHZ_48) == hx("AA EC 92 00 03 0E 01 FF 39")
+    assert decode_codec_m90(parse_frame(hx("BB EC 91 00 02 0E 01 49")).payload) == LdacMode.KHZ_48
+
+    # M90 Sub Out (0xED magic)
+    assert cmd_query_sub_out() == hx("AA ED 13 00 00 AA")
+    assert cmd_set_sub_out(SubOutLevel.LOW) == hx("AA ED 14 00 02 00 00 AD")
+    assert cmd_set_sub_out(SubOutLevel.MEDIUM) == hx("AA ED 14 00 02 00 01 AE")
+    assert cmd_set_sub_out(SubOutLevel.HIGH) == hx("AA ED 14 00 02 00 02 AF")
+    sub_frame = parse_frame(hx("BB ED 13 00 02 00 02 BF"))
+    assert sub_frame.magic == HEADER_MAGIC_ED
+    assert decode_sub_out(sub_frame.payload) == SubOutLevel.HIGH
+
+    # M90 Multipoint, Power Save, Timed Power-Off, Shutdown
+    assert cmd_query_multipoint() == hx("AA EC 7C 00 00 12")
+    assert cmd_set_multipoint(True) == hx("AA EC 7D 00 02 00 01 16")
+    assert decode_multipoint(parse_frame(hx("BB EC 7C 00 02 00 00 25")).payload) is False
+
+    assert cmd_query_power_save() == hx("AA EC B1 00 00 47")
+    assert cmd_set_power_save(False) == hx("AA EC B2 00 01 00 49")
+    assert decode_power_save(parse_frame(hx("BB EC B1 00 01 01 5A")).payload) is True
+
+    assert cmd_query_timed_off() == hx("AA EC D3 00 00 69")
+    assert cmd_set_timed_off(15) == hx("AA EC D1 00 02 00 0F 78")
+    assert cmd_cancel_timed_off() == hx("AA EC D2 00 00 68")
+    assert decode_timed_off(parse_frame(hx("BB EC D3 00 02 00 00 7C")).payload) == 0
+    assert cmd_power_off_device() == hx("AA EC CE 00 00 64")
+
+    # FrameReassembler must accept CC EC alt-ACKs and BB ED Sub Out frames
+    reassembler = FrameReassembler()
+    frames = reassembler.feed(hx("CC EC D1 00 01 01 8B") + hx("BB ED 13 00 02 00 01 BE"))
+    assert len(frames) == 2
+    assert frames[0].direction == HEADER_SETTER_ALT_ACK
+    assert frames[1].magic == HEADER_MAGIC_ED
+    assert decode_sub_out(frames[1].payload) == SubOutLevel.MEDIUM

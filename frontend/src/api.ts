@@ -9,6 +9,8 @@ import type {
   ScannedDevice,
   SmartLightSensitivity,
   SmartLightTimer,
+  SpeakerModel,
+  SubOutLevel,
   UpdateState,
   UsbState,
 } from './types'
@@ -49,8 +51,8 @@ export const api = {
 
   refreshBle: () => postJson<{ ble_state: BleState }>('/api/ble/refresh'),
 
-  setDemoMode: (enabled: boolean) =>
-    postJson<{ ble_state: BleState }>('/api/demo', { enabled }),
+  setDemoMode: (enabled: boolean, model: SpeakerModel = 'm60') =>
+    postJson<{ ble_state: BleState }>('/api/demo', { enabled, model }),
 
   setVolume: (level: number) =>
     postJson<{ ble_state: BleState }>('/api/volume', { level }),
@@ -82,11 +84,17 @@ export const api = {
     name?: string,
   ) => postJson<{ ble_state: BleState }>('/api/eq/custom/all', { bands, name }),
 
-  saveEqProfile: (name: string, gains_db: number[], freqs: number[]) =>
+  saveEqProfile: (
+    name: string,
+    gains_db: number[],
+    freqs: number[],
+    model?: SpeakerModel,
+  ) =>
     postJson<{ preset: SavedEqPreset; presets: SavedEqPreset[] }>('/api/eq/saved', {
       name,
       gains_db,
       freqs,
+      model,
     }),
 
   deleteEqProfile: async (id: string) => {
@@ -99,6 +107,21 @@ export const api = {
 
   setSmartLight: (timer: SmartLightTimer, sensitivity: SmartLightSensitivity) =>
     postJson<{ ble_state: BleState }>('/api/smart-light', { timer, sensitivity }),
+
+  setSubOut: (level: SubOutLevel) =>
+    postJson<{ ble_state: BleState }>('/api/sub-out', { level }),
+
+  setMultipoint: (enabled: boolean) =>
+    postJson<{ ble_state: BleState }>('/api/multipoint', { enabled }),
+
+  setPowerSave: (enabled: boolean) =>
+    postJson<{ ble_state: BleState }>('/api/power-save', { enabled }),
+
+  setTimedOff: (minutes: number) =>
+    postJson<{ ble_state: BleState }>('/api/timed-off', { minutes }),
+
+  powerOffDevice: () =>
+    postJson<{ ble_state: BleState }>('/api/device/power-off'),
 
   setPromptTone: (enabled: boolean) =>
     postJson<{ ble_state: BleState }>('/api/prompt-tone', { enabled }),

@@ -3,7 +3,7 @@
 import pytest
 
 from backend.ble_client import M60Controller
-from backend.protocol import InputSource
+from backend.protocol import InputSource, M90InputSource
 
 
 @pytest.mark.asyncio
@@ -64,3 +64,19 @@ async def test_sync_fast_state_detects_physical_speaker_changes() -> None:
     changed_again = await ctrl.sync_fast_state()
     assert changed_again is False
     assert [p for t, p in events if t == "ble_state"] == []
+
+
+@pytest.mark.asyncio
+async def test_m90_sync_fast_state_detects_physical_speaker_changes() -> None:
+    ctrl = M60Controller()
+    await ctrl.set_demo_mode(True, model="m90")
+
+    assert ctrl._sim is not None
+    ctrl._sim.volume = 32
+    ctrl._sim.input_source = M90InputSource.OPTICAL
+
+    changed = await ctrl.sync_fast_state()
+    assert changed is True
+    assert ctrl.state.model == "m90"
+    assert ctrl.state.volume == 32
+    assert ctrl.state.input_source == "optical"

@@ -1,4 +1,4 @@
-"""Async Edifier M60 BLE controller (real Bleak hardware + Demo Mode simulator)."""
+"""Async Edifier M60 / M90 BLE controller (real Bleak hardware + Demo Mode simulator)."""
 
 from __future__ import annotations
 
@@ -12,12 +12,18 @@ from typing import Any, Awaitable, Callable
 from bleak import BleakClient, BleakScanner
 
 from .protocol import (
-    CONNEX_ADVERTISING_SERVICE_UUID,
+    HEADER_MAGIC_ED,
+    M60_CONNEX_ADVERTISING_SERVICE_UUID,
     M60_GATT_SERVICE_UUID,
     M60_INPUT_GROUP,
     M60_NOTIFY_CHAR_UUID,
     M60_WRITE_CHAR_UUID,
+    M90_CONNEX_ADVERTISING_SERVICE_UUID,
+    M90_GATT_SERVICE_UUID,
+    M90_INPUT_GROUP,
     MAX_VOLUME,
+    MODEL_M60,
+    MODEL_M90,
     VALID_ALL_HEADERS,
     CustomEqState,
     EqBand,
@@ -26,50 +32,72 @@ from .protocol import (
     FrameReassembler,
     InputSource,
     LdacMode,
+    M90EqPreset,
+    M90InputSource,
     Opcode,
     PlaybackAction,
     ProtocolError,
     SmartLightSensitivity,
     SmartLightTimer,
+    SubOutLevel,
+    cmd_cancel_timed_off,
     cmd_disconnect_bt_audio,
     cmd_playback,
+    cmd_power_off_device,
     cmd_query_a2dp_state,
     cmd_query_audio_decoding,
     cmd_query_capabilities,
     cmd_query_classic_mac,
+    cmd_query_codec_m90,
     cmd_query_custom_eq,
     cmd_query_eq_preset,
     cmd_query_firmware,
     cmd_query_input,
     cmd_query_ldac,
+    cmd_query_multipoint,
     cmd_query_name,
+    cmd_query_power_save,
     cmd_query_prompt_tone,
     cmd_query_smart_light,
+    cmd_query_sub_out,
+    cmd_query_timed_off,
     cmd_query_volume,
+    cmd_set_codec_m90,
     cmd_set_custom_eq_band,
     cmd_set_custom_eq_meta,
     cmd_set_eq_preset,
     cmd_set_input,
     cmd_set_ldac,
+    cmd_set_multipoint,
     cmd_set_name,
+    cmd_set_power_save,
     cmd_set_prompt_tone,
     cmd_set_smart_light,
+    cmd_set_sub_out,
+    cmd_set_timed_off,
     cmd_set_volume,
     decode_a2dp_state,
     decode_audio_decoding,
     decode_capabilities,
     decode_classic_mac,
+    decode_codec_m90,
     decode_custom_eq,
     decode_eq_preset,
     decode_firmware,
     decode_input,
     decode_ldac,
+    decode_multipoint,
     decode_name,
+    decode_power_save,
     decode_prompt_tone,
     decode_smart_light,
+    decode_sub_out,
+    decode_timed_off,
     decode_volume,
     default_custom_eq_bands,
     describe_frame,
+    max_volume_for_model,
+    normalize_model,
     parse_frame,
 )
 from .simulator import SimulatedM60Device
@@ -82,6 +110,7 @@ class SpeakerState:
     connected: bool = False
     connecting: bool = False
     demo_mode: bool = False
+    model: str = MODEL_M60
     address: str | None = None
     device_name: str = "EDIFIER M60"
     firmware: str | None = None
@@ -99,6 +128,10 @@ class SpeakerState:
     prompt_tone: bool = True
     smart_light_timer: str = "10s"
     smart_light_sensitivity: str = "general"
+    sub_out_level: str = "medium"
+    multipoint: bool = False
+    power_save: bool = False
+    timed_off_minutes: int = 0
     a2dp_state_code: int | None = None
     a2dp_state: str = "unknown"
     audio_decoding_code: int | None = None
@@ -111,6 +144,7 @@ class SpeakerState:
             "connected": self.connected,
             "connecting": self.connecting,
             "demo_mode": self.demo_mode,
+            "model": self.model,
             "address": self.address,
             "device_name": self.device_name,
             "firmware": self.firmware,
@@ -126,6 +160,10 @@ class SpeakerState:
             "prompt_tone": self.prompt_tone,
             "smart_light_timer": self.smart_light_timer,
             "smart_light_sensitivity": self.smart_light_sensitivity,
+            "sub_out_level": self.sub_out_level,
+            "multipoint": self.multipoint,
+            "power_save": self.power_save,
+            "timed_off_minutes": self.timed_off_minutes,
             "a2dp_state_code": self.a2dp_state_code,
             "a2dp_state": self.a2dp_state,
             "audio_decoding_code": self.audio_decoding_code,
@@ -147,7 +185,7 @@ class M60Controller:
         self._sim: SimulatedM60Device | None = None
         self._reassembler = FrameReassembler(allowed_headers=VALID_ALL_HEADERS)
         self._cmd_lock = asyncio.Lock()
-        self._pending: dict[int, asyncio.Future[Frame]] = {}
+        self._pending: dict[tuple[int, int], asyncio.Future[Frame]] = {}
         self._frame_logs: deque[dict[str, Any]] = deque(maxlen=200)
         self._listeners: set[EventCallback] = set()
         self._settle_task: asyncio.Task[None] | None = None
@@ -191,21 +229,30 @@ class M60Controller:
     async def scan(
         self, timeout: float = 6.0, show_all: bool = False
     ) -> list[dict[str, Any]]:
-        """Scan for Edifier M60 BLE peripherals."""
+        """Scan for Edifier M60 / M90 BLE peripherals."""
         discovered = await BleakScanner.discover(timeout=timeout, return_adv=True)
         results: list[dict[str, Any]] = []
         for address, pair in discovered.items():
             device, adv = pair
             name = (adv.local_name or device.name or "").strip()
             uuids = [u.lower() for u in (adv.service_uuids or [])]
-            is_edifier = (
-                "edifier" in name.lower()
-                or "m60" in name.lower()
-                or CONNEX_ADVERTISING_SERVICE_UUID in uuids
+            low_name = name.lower()
+            is_m90 = (
+                "m90" in low_name
+                or M90_CONNEX_ADVERTISING_SERVICE_UUID in uuids
+                or M90_GATT_SERVICE_UUID in uuids
+            )
+            is_m60 = (
+                "m60" in low_name
+                or M60_CONNEX_ADVERTISING_SERVICE_UUID in uuids
                 or M60_GATT_SERVICE_UUID in uuids
             )
+            is_edifier = "edifier" in low_name or is_m60 or is_m90
             if not show_all and not is_edifier:
                 continue
+            detected_model = (
+                MODEL_M90 if is_m90 else (MODEL_M60 if is_m60 else None)
+            )
             results.append(
                 {
                     "address": address,
@@ -213,6 +260,7 @@ class M60Controller:
                     "rssi": adv.rssi,
                     "service_uuids": uuids,
                     "is_edifier": is_edifier,
+                    "model": detected_model,
                 }
             )
         results.sort(
@@ -220,15 +268,26 @@ class M60Controller:
         )
         return results
 
-    async def set_demo_mode(self, enabled: bool) -> dict[str, Any]:
+    async def set_demo_mode(
+        self, enabled: bool, model: str = MODEL_M60
+    ) -> dict[str, Any]:
         if enabled:
+            m = normalize_model(model)
             await self.disconnect()
-            self._sim = SimulatedM60Device()
+            self._sim = SimulatedM60Device(model=m)
             self.state = SpeakerState(
                 connected=True,
                 demo_mode=True,
-                address="DEMO:M60:00:00:01",
-                notice="Demo Mode active — interacting with an in-memory Edifier M60 emulator.",
+                model=m,
+                address=f"DEMO:{m.upper()}:00:00:01",
+                device_name=f"EDIFIER {m.upper()}",
+                max_volume=max_volume_for_model(m),
+                eq_preset="classic" if m == MODEL_M90 else "music",
+                custom_eq=CustomEqState(
+                    format_byte=0x10 if m == MODEL_M90 else 0x03,
+                    bands=default_custom_eq_bands(m),
+                ),
+                notice=f"Demo Mode active — interacting with an in-memory Edifier {m.upper()} emulator.",
             )
             await self.refresh_all()
             return self.state.to_dict()
@@ -268,20 +327,28 @@ class M60Controller:
         try:
             await client.connect()
             services = client.services
-            service = services.get_service(M60_GATT_SERVICE_UUID)
-            if service is None:
+            m90_service = services.get_service(M90_GATT_SERVICE_UUID)
+            m60_service = services.get_service(M60_GATT_SERVICE_UUID)
+            if m90_service is not None:
+                service = m90_service
+                detected_model = MODEL_M90
+            elif m60_service is not None:
+                service = m60_service
+                detected_model = MODEL_M60
+            else:
                 await client.disconnect()
                 raise RuntimeError(
-                    "Connected to device, but Edifier M60 GATT service (4809f601-...) "
-                    "was not exposed. Close the EDIFIER ConneX phone app (M60 allows "
-                    "only 1 BLE connection) or wake the speaker by playing audio."
+                    "Connected to device, but neither Edifier M60 (4809f601-...) "
+                    "nor Edifier M90 (48094503-...) GATT service was exposed. Close the "
+                    "EDIFIER ConneX phone app (only 1 BLE connection is allowed) or wake "
+                    "the speaker by playing audio."
                 )
             notify_char = service.get_characteristic(M60_NOTIFY_CHAR_UUID)
             write_char = service.get_characteristic(M60_WRITE_CHAR_UUID)
             if notify_char is None or write_char is None:
                 await client.disconnect()
                 raise RuntimeError(
-                    "Edifier M60 GATT control characteristics (48090001/48090002) not found."
+                    "Edifier GATT control characteristics (48090001/48090002) not found."
                 )
 
             self._client = client
@@ -291,8 +358,22 @@ class M60Controller:
             self.state.connected = True
             self.state.connecting = False
             self.state.demo_mode = False
+            self.state.model = detected_model
+            self.state.max_volume = max_volume_for_model(detected_model)
+            self.state.device_name = (
+                "EDIFIER M90" if detected_model == MODEL_M90 else "EDIFIER M60"
+            )
+            self.state.eq_preset = (
+                "classic" if detected_model == MODEL_M90 else "music"
+            )
+            self.state.custom_eq = CustomEqState(
+                format_byte=0x10 if detected_model == MODEL_M90 else 0x03,
+                bands=default_custom_eq_bands(detected_model),
+            )
             self.state.last_error = None
-            self.state.notice = "Connected over BLE."
+            self.state.notice = (
+                f"Connected to Edifier {detected_model.upper()} over BLE."
+            )
             await self._emit_state()
             await self.refresh_all()
             self._poll_cycle = 0
@@ -394,9 +475,10 @@ class M60Controller:
         entry = self._record_log("RX", frame.raw, describe_frame(frame))
         self._schedule_coro(self._emit("frame_log", entry))
         before = self.state.to_dict()
-        is_unsolicited = frame.opcode not in self._pending
+        key = (frame.magic, frame.opcode)
+        is_unsolicited = key not in self._pending
         self._apply_frame_to_state(frame, unsolicited=is_unsolicited)
-        fut = self._pending.pop(frame.opcode, None)
+        fut = self._pending.pop(key, None)
         if fut is not None and not fut.done():
             fut.set_result(frame)
         elif self.state.to_dict() != before:
@@ -406,6 +488,11 @@ class M60Controller:
         op = frame.opcode
         p = frame.payload
         try:
+            if frame.magic == HEADER_MAGIC_ED:
+                if op in (Opcode.QUERY_SUB_OUT, Opcode.SET_SUB_OUT) and p:
+                    self.state.sub_out_level = decode_sub_out(p).label
+                return
+
             if op == Opcode.QUERY_NAME and p:
                 self.state.device_name = decode_name(p)
             elif op == Opcode.QUERY_FIRMWARE and p:
@@ -414,32 +501,49 @@ class M60Controller:
                 self.state.classic_mac = decode_classic_mac(p)
             elif op == Opcode.QUERY_CAPABILITIES and p:
                 self.state.capabilities = decode_capabilities(p)
-            elif op in (Opcode.QUERY_INPUT, Opcode.SET_INPUT) and len(p) >= 2 and p[0] == M60_INPUT_GROUP:
-                self.state.input_source = decode_input(p).label
+            elif (
+                op in (Opcode.QUERY_INPUT, Opcode.SET_INPUT)
+                and len(p) >= 2
+                and p[0] in (M60_INPUT_GROUP, M90_INPUT_GROUP)
+            ):
+                self.state.input_source = decode_input(p, self.state.model).label
             elif op in (Opcode.QUERY_VOLUME, Opcode.SET_VOLUME):
                 if len(p) >= 2:
                     max_v, cur_v = decode_volume(p)
-                    self.state.max_volume = max_v or MAX_VOLUME
+                    self.state.max_volume = max_v or max_volume_for_model(self.state.model)
                     self.state.volume = cur_v
                 elif unsolicited and len(p) == 1 and 0 <= p[0] <= self.state.max_volume:
                     self.state.volume = int(p[0])
             elif op == Opcode.QUERY_EQ_PRESET and p:
-                self.state.eq_preset = decode_eq_preset(p).label
+                self.state.eq_preset = decode_eq_preset(p, self.state.model).label
             elif op == Opcode.SET_EQ_PRESET and unsolicited and len(p) == 1:
                 try:
-                    self.state.eq_preset = decode_eq_preset(p).label
+                    self.state.eq_preset = decode_eq_preset(p, self.state.model).label
                 except ValueError:
                     pass
             elif op == Opcode.QUERY_CUSTOM_EQ and len(p) >= 2:
                 self.state.custom_eq = decode_custom_eq(p)
             elif op == Opcode.QUERY_LDAC and p:
                 self.state.ldac_mode = decode_ldac(p).label
+            elif op == Opcode.QUERY_CODEC_M90 and p:
+                self.state.ldac_mode = decode_codec_m90(p).label
+            elif op == Opcode.SET_CODEC_M90 and len(p) >= 2 and p[0] == 0x0F:
+                try:
+                    self.state.ldac_mode = LdacMode(p[1]).label
+                except ValueError:
+                    pass
             elif op == Opcode.QUERY_PROMPT_TONE and p:
                 self.state.prompt_tone = decode_prompt_tone(p)
             elif op in (Opcode.QUERY_SMART_LIGHT, Opcode.SET_SMART_LIGHT) and len(p) >= 3:
                 timer, sens = decode_smart_light(p)
                 self.state.smart_light_timer = timer.label
                 self.state.smart_light_sensitivity = sens.label
+            elif op == Opcode.QUERY_MULTIPOINT and p:
+                self.state.multipoint = decode_multipoint(p)
+            elif op == Opcode.QUERY_POWER_SAVE and p:
+                self.state.power_save = decode_power_save(p)
+            elif op == Opcode.QUERY_TIMED_OFF and p:
+                self.state.timed_off_minutes = decode_timed_off(p)
             elif op == Opcode.QUERY_A2DP_STATE and p:
                 code, label = decode_a2dp_state(p)
                 self.state.a2dp_state_code = code
@@ -486,12 +590,13 @@ class M60Controller:
 
             loop = asyncio.get_running_loop()
             fut: asyncio.Future[Frame] | None = None
+            pending_key = (req.magic, req.opcode)
             if expect_reply:
-                prev = self._pending.pop(req.opcode, None)
+                prev = self._pending.pop(pending_key, None)
                 if prev and not prev.done():
                     prev.cancel()
                 fut = loop.create_future()
-                self._pending[req.opcode] = fut
+                self._pending[pending_key] = fut
 
             await self._client.write_gatt_char(
                 M60_WRITE_CHAR_UUID, raw_frame, response=False
@@ -503,9 +608,9 @@ class M60Controller:
             try:
                 return await asyncio.wait_for(fut, timeout=timeout)
             except asyncio.TimeoutError as exc:
-                self._pending.pop(req.opcode, None)
+                self._pending.pop(pending_key, None)
                 raise TimeoutError(
-                    f"Timed out waiting for M60 reply to opcode 0x{req.opcode:02X}"
+                    f"Timed out waiting for speaker reply to opcode 0x{req.opcode:02X}"
                 ) from exc
 
     # ------------------------------------------------------------------
@@ -525,12 +630,27 @@ class M60Controller:
             cmd_query_volume(),
             cmd_query_eq_preset(),
             cmd_query_custom_eq(),
-            cmd_query_ldac(),
             cmd_query_prompt_tone(),
-            cmd_query_smart_light(),
             cmd_query_a2dp_state(),
             cmd_query_audio_decoding(),
         ]
+        if self.state.model == MODEL_M90:
+            queries.extend(
+                [
+                    cmd_query_codec_m90(),
+                    cmd_query_sub_out(),
+                    cmd_query_multipoint(),
+                    cmd_query_power_save(),
+                    cmd_query_timed_off(),
+                ]
+            )
+        else:
+            queries.extend(
+                [
+                    cmd_query_ldac(),
+                    cmd_query_smart_light(),
+                ]
+            )
         for q in queries:
             try:
                 await self._send_frame(q, expect_reply=True, timeout=3.0)
@@ -556,7 +676,18 @@ class M60Controller:
             cmd_query_audio_decoding(),
         ]
         if self._poll_cycle % 5 == 0:
-            queries.extend([cmd_query_smart_light(), cmd_query_a2dp_state()])
+            queries.append(cmd_query_a2dp_state())
+            if self.state.model == MODEL_M90:
+                queries.extend(
+                    [
+                        cmd_query_sub_out(),
+                        cmd_query_multipoint(),
+                        cmd_query_power_save(),
+                        cmd_query_timed_off(),
+                    ]
+                )
+            else:
+                queries.append(cmd_query_smart_light())
         self._poll_cycle += 1
 
         for q in queries:
@@ -584,8 +715,11 @@ class M60Controller:
             pass
 
     async def set_volume(self, level: int) -> dict[str, Any]:
-        clamped = max(0, min(MAX_VOLUME, int(level)))
-        await self._send_frame(cmd_set_volume(clamped), expect_reply=True)
+        max_v = self.state.max_volume or max_volume_for_model(self.state.model)
+        clamped = max(0, min(max_v, int(level)))
+        await self._send_frame(
+            cmd_set_volume(clamped, max_volume=max_v), expect_reply=True
+        )
         self.state.volume = clamped
         await self._emit_state()
         return self.state.to_dict()
@@ -594,8 +728,14 @@ class M60Controller:
         return await self.set_volume(self.state.volume + delta)
 
     async def set_input(self, source: str) -> dict[str, Any]:
-        src = InputSource.from_str(source)
-        await self._send_frame(cmd_set_input(src), expect_reply=True)
+        src = (
+            M90InputSource.from_str(source)
+            if self.state.model == MODEL_M90
+            else InputSource.from_str(source)
+        )
+        await self._send_frame(
+            cmd_set_input(src, model=self.state.model), expect_reply=True
+        )
         self.state.input_source = src.label
         self.state.input_settling = not self.state.demo_mode
         self.state.notice = (
@@ -638,21 +778,27 @@ class M60Controller:
         return self.state.to_dict()
 
     async def set_eq_preset(self, preset: str) -> dict[str, Any]:
-        eq = EqPreset.from_str(preset)
+        if self.state.model == MODEL_M90:
+            eq: EqPreset | M90EqPreset = M90EqPreset.from_str(preset)
+            is_custom = eq == M90EqPreset.CUSTOM
+        else:
+            eq = EqPreset.from_str(preset)
+            is_custom = eq == EqPreset.CUSTOMIZED
         await self._send_frame(cmd_set_eq_preset(eq), expect_reply=True)
         self.state.eq_preset = eq.label
         await self._send_frame(cmd_query_eq_preset(), expect_reply=True)
-        if eq == EqPreset.CUSTOMIZED:
+        if is_custom:
             await self._send_frame(cmd_query_custom_eq(), expect_reply=True)
         await self._emit_state()
         return self.state.to_dict()
 
     async def _ensure_customized_preset(self) -> None:
-        if self.state.eq_preset != EqPreset.CUSTOMIZED.label:
-            await self._send_frame(
-                cmd_set_eq_preset(EqPreset.CUSTOMIZED), expect_reply=True
-            )
-            self.state.eq_preset = EqPreset.CUSTOMIZED.label
+        target = (
+            M90EqPreset.CUSTOM if self.state.model == MODEL_M90 else EqPreset.CUSTOMIZED
+        )
+        if self.state.eq_preset != target.label:
+            await self._send_frame(cmd_set_eq_preset(target), expect_reply=True)
+            self.state.eq_preset = target.label
 
     async def set_custom_eq_band(
         self,
@@ -661,11 +807,14 @@ class M60Controller:
         freq: int | None = None,
         q_raw: int | None = None,
     ) -> dict[str, Any]:
-        if not 0 <= index <= 5:
-            raise ValueError("M60 custom EQ supports band indices 0..5")
+        max_idx = 8 if self.state.model == MODEL_M90 else 5
+        if not 0 <= index <= max_idx:
+            raise ValueError(
+                f"{self.state.model.upper()} custom EQ supports band indices 0..{max_idx}"
+            )
         await self._ensure_customized_preset()
-        if not self.state.custom_eq.bands:
-            self.state.custom_eq.bands = default_custom_eq_bands()
+        if not self.state.custom_eq.bands or len(self.state.custom_eq.bands) <= max_idx:
+            self.state.custom_eq.bands = default_custom_eq_bands(self.state.model)
         current = self.state.custom_eq.bands[index]
         updated = EqBand.from_db(
             index=index,
@@ -674,7 +823,9 @@ class M60Controller:
             q_raw=current.q_raw if q_raw is None else int(q_raw),
             filter_raw=current.filter_raw,
         )
-        await self._send_frame(cmd_set_custom_eq_band(updated), expect_reply=True)
+        await self._send_frame(
+            cmd_set_custom_eq_band(updated, model=self.state.model), expect_reply=True
+        )
         self.state.custom_eq.bands[index] = updated
         await self._emit_state()
         return self.state.to_dict()
@@ -684,12 +835,13 @@ class M60Controller:
         bands: list[dict[str, Any]],
         name: str | None = None,
     ) -> dict[str, Any]:
+        max_idx = 8 if self.state.model == MODEL_M90 else 5
         await self._ensure_customized_preset()
-        if not self.state.custom_eq.bands:
-            self.state.custom_eq.bands = default_custom_eq_bands()
+        if not self.state.custom_eq.bands or len(self.state.custom_eq.bands) <= max_idx:
+            self.state.custom_eq.bands = default_custom_eq_bands(self.state.model)
         for item in bands:
             idx = int(item["index"])
-            if not 0 <= idx <= 5:
+            if not 0 <= idx <= max_idx:
                 continue
             cur = self.state.custom_eq.bands[idx]
             updated = EqBand.from_db(
@@ -699,7 +851,10 @@ class M60Controller:
                 q_raw=int(item.get("q_raw", cur.q_raw)),
                 filter_raw=cur.filter_raw,
             )
-            await self._send_frame(cmd_set_custom_eq_band(updated), expect_reply=True)
+            await self._send_frame(
+                cmd_set_custom_eq_band(updated, model=self.state.model),
+                expect_reply=True,
+            )
             self.state.custom_eq.bands[idx] = updated
         if name is not None:
             await self._send_frame(cmd_set_custom_eq_meta(name), expect_reply=True)
@@ -709,6 +864,8 @@ class M60Controller:
         return self.state.to_dict()
 
     async def set_smart_light(self, timer: str, sensitivity: str) -> dict[str, Any]:
+        if self.state.model == MODEL_M90:
+            raise ValueError("Smart Touch Light settings apply only to Edifier M60.")
         t = SmartLightTimer.from_str(timer)
         s = SmartLightSensitivity.from_str(sensitivity)
         await self._send_frame(cmd_set_smart_light(t, s), expect_reply=True)
@@ -726,6 +883,25 @@ class M60Controller:
     async def set_ldac(self, mode: str) -> dict[str, Any]:
         m = LdacMode.from_str(mode)
         self.state.ldac_mode = m.label
+        if self.state.model == MODEL_M90:
+            try:
+                await self._send_frame(
+                    cmd_set_codec_m90(m), expect_reply=True, timeout=3.0
+                )
+                await self._send_frame(
+                    cmd_query_codec_m90(), expect_reply=True, timeout=2.0
+                )
+                self.state.notice = (
+                    "M90 LDAC codec preference sent. Note: changing LDAC mode may restart "
+                    "the speaker's Bluetooth link."
+                )
+            except Exception:
+                self.state.notice = (
+                    "M90 LDAC command sent. Reconnect Bluetooth if the link restarted."
+                )
+            await self._emit_state()
+            return self.state.to_dict()
+
         try:
             await self._send_frame(cmd_set_ldac(m), expect_reply=True, timeout=3.0)
             await self._send_frame(cmd_query_ldac(), expect_reply=True, timeout=2.0)
@@ -743,6 +919,60 @@ class M60Controller:
         await self._emit_state()
         return self.state.to_dict()
 
+    async def set_sub_out(self, level: str) -> dict[str, Any]:
+        if self.state.model != MODEL_M90:
+            raise ValueError("Sub Out level control is only supported on Edifier M90.")
+        lvl = SubOutLevel.from_str(level)
+        await self._send_frame(cmd_set_sub_out(lvl), expect_reply=True)
+        self.state.sub_out_level = lvl.label
+        await self._emit_state()
+        return self.state.to_dict()
+
+    async def set_multipoint(self, enabled: bool) -> dict[str, Any]:
+        if self.state.model != MODEL_M90:
+            raise ValueError("Bluetooth multipoint is only supported on Edifier M90.")
+        await self._send_frame(cmd_set_multipoint(enabled), expect_reply=True)
+        await self._send_frame(cmd_query_multipoint(), expect_reply=True)
+        await self._emit_state()
+        return self.state.to_dict()
+
+    async def set_power_save(self, enabled: bool) -> dict[str, Any]:
+        if self.state.model != MODEL_M90:
+            raise ValueError("Power-save mode is only supported on Edifier M90.")
+        await self._send_frame(cmd_set_power_save(enabled), expect_reply=True)
+        await self._send_frame(cmd_query_power_save(), expect_reply=True)
+        await self._emit_state()
+        return self.state.to_dict()
+
+    async def set_timed_off(self, minutes: int) -> dict[str, Any]:
+        if self.state.model != MODEL_M90:
+            raise ValueError("Timed power-off is only supported on Edifier M90.")
+        mins = max(0, int(minutes))
+        if mins == 0:
+            await self._send_frame(cmd_cancel_timed_off(), expect_reply=True)
+        else:
+            await self._send_frame(cmd_set_timed_off(mins), expect_reply=True)
+        await self._send_frame(cmd_query_timed_off(), expect_reply=True)
+        await self._emit_state()
+        return self.state.to_dict()
+
+    async def power_off_device(self) -> dict[str, Any]:
+        if self.state.model != MODEL_M90:
+            raise ValueError("Remote BLE shutdown (0xCE) is only supported on Edifier M90.")
+        try:
+            await self._send_frame(cmd_power_off_device(), expect_reply=False)
+        except Exception:
+            pass
+        if self.state.demo_mode:
+            self.state.notice = (
+                "Sent M90 shutdown command (0xCE) to emulator. On real hardware, the speaker powers off immediately."
+            )
+            await self._emit_state()
+            return self.state.to_dict()
+        state = await self.disconnect()
+        state["notice"] = "Sent shutdown command (0xCE) to Edifier M90."
+        return state
+
     async def rename_device(self, name: str) -> dict[str, Any]:
         frame = cmd_set_name(name)
         await self._send_frame(frame, expect_reply=True)
@@ -758,7 +988,7 @@ class M60Controller:
         self.state.a2dp_state = "closed"
         self.state.a2dp_state_code = 0x03
         self.state.notice = (
-            "Sent Bluetooth audio disconnect (0xCD). Reconnect from Windows Bluetooth settings when needed."
+            "Sent Bluetooth audio disconnect (0xCD). Reconnect from OS Bluetooth settings when needed."
         )
         await self._emit_state()
         return self.state.to_dict()

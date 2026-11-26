@@ -3,7 +3,7 @@ Set-Location $PSScriptRoot
 
 $AppVersion = (& .\.venv\Scripts\python.exe -c "from backend.version import APP_VERSION; print(APP_VERSION)").Trim()
 if (-not $AppVersion) { throw "Could not determine APP_VERSION" }
-Write-Host "==> Building Edifier M60 Studio Control v$AppVersion for Windows (x64)"
+Write-Host "==> Building Edifier M60 / M90 Studio Control v$AppVersion for Windows (x64)"
 
 Write-Host "[1/5] Building frontend production bundle..."
 Push-Location frontend

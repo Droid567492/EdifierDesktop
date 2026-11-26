@@ -1,4 +1,4 @@
-"""FastAPI REST + WebSocket server for Edifier M60 Desktop Control."""
+"""FastAPI REST + WebSocket server for Edifier M60 / M90 Desktop Control."""
 
 from __future__ import annotations
 
@@ -42,10 +42,11 @@ class ConnectRequest(BaseModel):
 
 class DemoRequest(BaseModel):
     enabled: bool
+    model: str = "m60"
 
 
 class VolumeRequest(BaseModel):
-    level: int = Field(ge=0, le=16)
+    level: int = Field(ge=0, le=50)
 
 
 class InputRequest(BaseModel):
@@ -61,14 +62,14 @@ class EqPresetRequest(BaseModel):
 
 
 class CustomEqBandRequest(BaseModel):
-    index: int = Field(ge=0, le=5)
+    index: int = Field(ge=0, le=8)
     gain_db: float = Field(ge=-3.0, le=3.0)
     freq: int | None = Field(default=None, ge=20, le=20000)
     q_raw: int | None = Field(default=None, ge=1, le=255)
 
 
 class CustomEqBandItem(BaseModel):
-    index: int = Field(ge=0, le=5)
+    index: int = Field(ge=0, le=8)
     gain_db: float = Field(ge=-3.0, le=3.0)
     freq: int | None = Field(default=None, ge=20, le=20000)
     q_raw: int | None = Field(default=None, ge=1, le=255)
@@ -81,13 +82,30 @@ class CustomEqAllRequest(BaseModel):
 
 class SaveEqProfileRequest(BaseModel):
     name: str = Field(min_length=1, max_length=32)
-    gains_db: list[float] = Field(min_length=6, max_length=6)
-    freqs: list[int] = Field(min_length=6, max_length=6)
+    gains_db: list[float] = Field(min_length=6, max_length=9)
+    freqs: list[int] = Field(min_length=6, max_length=9)
+    model: str | None = None
 
 
 class SmartLightRequest(BaseModel):
     timer: str
     sensitivity: str
+
+
+class SubOutRequest(BaseModel):
+    level: str
+
+
+class MultipointRequest(BaseModel):
+    enabled: bool
+
+
+class PowerSaveRequest(BaseModel):
+    enabled: bool
+
+
+class TimedOffRequest(BaseModel):
+    minutes: int = Field(ge=0, le=65535)
 
 
 class PromptToneRequest(BaseModel):
@@ -289,7 +307,7 @@ def create_app(
                 ctx.hotkeys.stop()
             await ctx.ble.disconnect()
 
-    app = FastAPI(title="Edifier M60 Desktop Control", lifespan=lifespan)
+    app = FastAPI(title="Edifier M60 / M90 Desktop Control", lifespan=lifespan)
     app.state.ctx = ctx
 
     def _raise_http(exc: Exception) -> None:
@@ -343,8 +361,11 @@ def create_app(
 
     @app.post("/api/demo")
     async def toggle_demo(req: DemoRequest) -> dict[str, Any]:
-        state = await ctx.ble.set_demo_mode(req.enabled)
-        return {"ble_state": state}
+        try:
+            state = await ctx.ble.set_demo_mode(req.enabled, model=req.model)
+            return {"ble_state": state}
+        except Exception as exc:
+            _raise_http(exc)
 
     # ------------------------------------------------------------------
     # Speaker Control Endpoints
@@ -352,6 +373,12 @@ def create_app(
 
     @app.post("/api/volume")
     async def set_volume(req: VolumeRequest) -> dict[str, Any]:
+        max_v = ctx.ble.state.max_volume or 16
+        if ctx.ble.state.connected and req.level > max_v:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Volume must be 0..{max_v} for {ctx.ble.state.model.upper()}",
+            )
         try:
             state = await ctx.ble.set_volume(req.level)
             return {"ble_state": state}
@@ -410,7 +437,9 @@ def create_app(
 
     @app.post("/api/eq/saved")
     async def save_eq_profile(req: SaveEqProfileRequest) -> dict[str, Any]:
-        created = ctx.store.save_eq_preset(req.name, req.gains_db, req.freqs)
+        created = ctx.store.save_eq_preset(
+            req.name, req.gains_db, req.freqs, model=req.model
+        )
         presets = ctx.store.list_eq_presets()
         await ctx.broadcast("saved_eq_presets", {"presets": presets})
         return {"preset": created, "presets": presets}
@@ -430,6 +459,38 @@ def create_app(
     async def set_smart_light(req: SmartLightRequest) -> dict[str, Any]:
         try:
             state = await ctx.ble.set_smart_light(req.timer, req.sensitivity)
+            return {"ble_state": state}
+        except Exception as exc:
+            _raise_http(exc)
+
+    @app.post("/api/sub-out")
+    async def set_sub_out(req: SubOutRequest) -> dict[str, Any]:
+        try:
+            state = await ctx.ble.set_sub_out(req.level)
+            return {"ble_state": state}
+        except Exception as exc:
+            _raise_http(exc)
+
+    @app.post("/api/multipoint")
+    async def set_multipoint(req: MultipointRequest) -> dict[str, Any]:
+        try:
+            state = await ctx.ble.set_multipoint(req.enabled)
+            return {"ble_state": state}
+        except Exception as exc:
+            _raise_http(exc)
+
+    @app.post("/api/power-save")
+    async def set_power_save(req: PowerSaveRequest) -> dict[str, Any]:
+        try:
+            state = await ctx.ble.set_power_save(req.enabled)
+            return {"ble_state": state}
+        except Exception as exc:
+            _raise_http(exc)
+
+    @app.post("/api/timed-off")
+    async def set_timed_off(req: TimedOffRequest) -> dict[str, Any]:
+        try:
+            state = await ctx.ble.set_timed_off(req.minutes)
             return {"ble_state": state}
         except Exception as exc:
             _raise_http(exc)
@@ -462,6 +523,14 @@ def create_app(
     async def disconnect_bt_audio() -> dict[str, Any]:
         try:
             state = await ctx.ble.disconnect_bt_audio()
+            return {"ble_state": state}
+        except Exception as exc:
+            _raise_http(exc)
+
+    @app.post("/api/device/power-off")
+    async def power_off_device() -> dict[str, Any]:
+        try:
+            state = await ctx.ble.power_off_device()
             return {"ble_state": state}
         except Exception as exc:
             _raise_http(exc)

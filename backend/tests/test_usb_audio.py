@@ -154,3 +154,25 @@ def test_linux_pactl_sink_and_volume_parsers() -> None:
     vol_out = "Volume: front-left: 49152 /  75% / -7.50 dB,   front-right: 49152 /  75% / -7.50 dB"
     assert parse_linux_pactl_volume(vol_out, "Mute: no") == (75, False)
     assert parse_linux_pactl_volume(vol_out, "Mute: yes") == (75, True)
+
+
+def test_accepts_m90_usb_and_rejects_m90_bluetooth() -> None:
+    m90_usb = _fake_dev(
+        name="Speakers (EDIFIER M90)",
+        state=1,
+        enumerator="USB",
+        instance=r"{1}.USB\VID_2D99&PID_A095&MI_00\7&12345&0&0000",
+        hw_id=r"USB\VID_2D99&PID_A095&REV_0100&MI_00",
+    )
+    assert is_m60_usb_audio_device(m90_usb) is True
+
+    m90_bt = _fake_dev(
+        name="Speakers (EDIFIER M90)",
+        state=1,
+        enumerator="BTHENUM",
+        instance=r"{1}.BTHENUM\{0000110B-0000-1000-8000-00805F9B34FB}\9&1234",
+    )
+    assert is_m60_usb_audio_device(m90_bt) is False
+
+    linux_m90 = "72\talsa_output.usb-EDIFIER_M90-00.analog-stereo\tPipeWire\ts24le 2ch 96000Hz\tRUNNING\n"
+    assert parse_linux_pactl_sinks(linux_m90) == "alsa_output.usb-EDIFIER_M90-00.analog-stereo"

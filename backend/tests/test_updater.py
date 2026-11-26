@@ -87,7 +87,7 @@ async def test_check_updates_detects_repo_redirect_and_404() -> None:
     ) as client:
         st = await mgr.check_for_updates(client=client)
     assert st["status"] == "repo_moved"
-    assert "Edifier M60 Desktop Control" in st["message"]
+    assert "Edifier M60 / M90 Desktop Control" in st["message"]
     assert st["repo_search_url"].startswith("https://github.com/search")
 
     # 200 whose html_url points to a renamed repo -> repo_moved
@@ -112,4 +112,4 @@ async def test_check_updates_detects_repo_redirect_and_404() -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(not_found_handler)) as client:
         st3 = await mgr.check_for_updates(client=client)
     assert st3["status"] == "repo_not_found"
-    assert "Edifier M60 Desktop Control" in st3["message"]
+    assert "Edifier M60 / M90 Desktop Control" in st3["message"]

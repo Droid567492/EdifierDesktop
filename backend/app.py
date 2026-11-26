@@ -1,4 +1,4 @@
-"""Desktop launcher for Edifier M60 Control (FastAPI + Edge App Window + System Tray)."""
+"""Desktop launcher for Edifier M60 / M90 Control (FastAPI + App Window + System Tray)."""
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ def _find_app_browser() -> str | None:
     return None
 
 
-def _apply_window_icon_later(ico_path: Path, title_substring: str = "Edifier M60") -> None:
+def _apply_window_icon_later(ico_path: Path, title_substring: str = "Edifier") -> None:
     """Apply the shared .ico to the launched browser app window via Win32 WM_SETICON."""
     if sys.platform != "win32":
         return
@@ -182,7 +182,7 @@ def _ensure_stdio_streams() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     _ensure_stdio_streams()
-    parser = argparse.ArgumentParser(description="Edifier M60 Desktop Control")
+    parser = argparse.ArgumentParser(description="Edifier M60 / M90 Desktop Control")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=18600)
     parser.add_argument("--no-browser", action="store_true")
@@ -272,8 +272,14 @@ def main(argv: list[str] | None = None) -> int:
             server.should_exit = True
             icon.stop()
 
+        def _current_model() -> str:
+            ctx = getattr(app.state, "ctx", None)
+            if ctx is None:
+                return "m60"
+            return getattr(ctx.ble.state, "model", "m60")
+
         menu = pystray.Menu(
-            pystray.MenuItem("Open Edifier M60 Studio", lambda _i, _it: open_app_window(url), default=True),
+            pystray.MenuItem("Open Edifier M60 / M90 Studio", lambda _i, _it: open_app_window(url), default=True),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
                 "Volume +1",
@@ -299,6 +305,20 @@ def main(argv: list[str] | None = None) -> int:
                         ),
                     ),
                     pystray.MenuItem(
+                        "HDMI (ARC)",
+                        lambda _i, _it: _dispatch_ble(
+                            lambda ctx: ctx.ble.set_input("hdmi")
+                        ),
+                        visible=lambda _it: _current_model() == "m90",
+                    ),
+                    pystray.MenuItem(
+                        "Optical",
+                        lambda _i, _it: _dispatch_ble(
+                            lambda ctx: ctx.ble.set_input("optical")
+                        ),
+                        visible=lambda _it: _current_model() == "m90",
+                    ),
+                    pystray.MenuItem(
                         "AUX",
                         lambda _i, _it: _dispatch_ble(
                             lambda ctx: ctx.ble.set_input("aux")
@@ -314,6 +334,14 @@ def main(argv: list[str] | None = None) -> int:
                         lambda _i, _it: _dispatch_ble(
                             lambda ctx: ctx.ble.set_eq_preset("music")
                         ),
+                        visible=lambda _it: _current_model() != "m90",
+                    ),
+                    pystray.MenuItem(
+                        "Classic",
+                        lambda _i, _it: _dispatch_ble(
+                            lambda ctx: ctx.ble.set_eq_preset("classic")
+                        ),
+                        visible=lambda _it: _current_model() == "m90",
                     ),
                     pystray.MenuItem(
                         "Monitor",
@@ -326,15 +354,24 @@ def main(argv: list[str] | None = None) -> int:
                         lambda _i, _it: _dispatch_ble(
                             lambda ctx: ctx.ble.set_eq_preset("game")
                         ),
+                        visible=lambda _it: _current_model() != "m90",
                     ),
                     pystray.MenuItem(
                         "Movie",
                         lambda _i, _it: _dispatch_ble(
                             lambda ctx: ctx.ble.set_eq_preset("movie")
                         ),
+                        visible=lambda _it: _current_model() != "m90",
                     ),
                     pystray.MenuItem(
-                        "Customized",
+                        "Dynamic",
+                        lambda _i, _it: _dispatch_ble(
+                            lambda ctx: ctx.ble.set_eq_preset("dynamic")
+                        ),
+                        visible=lambda _it: _current_model() == "m90",
+                    ),
+                    pystray.MenuItem(
+                        "Custom",
                         lambda _i, _it: _dispatch_ble(
                             lambda ctx: ctx.ble.set_eq_preset("customized")
                         ),
@@ -353,7 +390,7 @@ def main(argv: list[str] | None = None) -> int:
         icon = pystray.Icon(
             "EdifierM60Control",
             _create_tray_image(),
-            "Edifier M60 Studio Control",
+            "Edifier M60 / M90 Studio Control",
             menu,
         )
         tray_icon_holder.append(icon)
