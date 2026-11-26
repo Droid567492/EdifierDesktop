@@ -125,8 +125,8 @@ export function InputSourceCard({
       </div>
 
       <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
-        Note: The M60 USB-C port carries UAC audio only; all DSP, EQ, and input
-        commands travel over BLE concurrently even while listening over USB-C.
+        Note: The Edifier M60 / M90 USB-C port carries UAC audio only; all DSP, EQ,
+        and input commands travel over BLE concurrently even while listening over USB-C.
       </div>
     </section>
   )

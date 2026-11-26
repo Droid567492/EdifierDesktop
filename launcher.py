@@ -1,4 +1,4 @@
-"""PyInstaller entry point for Edifier M60 Studio Control."""
+"""PyInstaller entry point for Edifier M60 / M90 Studio Control."""
 
 from backend.app import main
 

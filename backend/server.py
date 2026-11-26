@@ -686,8 +686,8 @@ def create_app(
     @app.get("/manifest.webmanifest", include_in_schema=False)
     async def serve_manifest() -> dict[str, Any]:
         return {
-            "name": "Edifier M60 Studio Control",
-            "short_name": "Edifier M60",
+            "name": "Edifier M60 / M90 Studio Control",
+            "short_name": "Edifier M60 / M90",
             "start_url": "/",
             "display": "standalone",
             "background_color": "#0c0e13",
