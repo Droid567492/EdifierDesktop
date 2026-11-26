@@ -83,3 +83,11 @@ Have an idea for a new feature or ran into an issue?
 - **[Report a Bug](https://github.com/Droid567492/EdifierDesktop/issues/new?template=bug_report.yml)**
 - **[Browse Existing Issues](https://github.com/Droid567492/EdifierDesktop/issues)**
 
+## Acknowledgements & Thanks
+
+This project builds on community reverse-engineering and prior open-source work for the Edifier M60:
+
+- **[`kralonur/edifier-speakers-ble`](https://github.com/kralonur/edifier-speakers-ble)** — Thank you for reverse-engineering and documenting the Edifier M60 BLE protocol (`docs/edifier-m60-ble.md`: GATT service/characteristic UUIDs, `AA EC` / `BB EC` frame structure, opcodes, 6-band EQ layout, smart light, LDAC quirks, and firmware behavior) that powers this app's communication layer.
+- **[`Spectra456/edifier-m60-controller`](https://github.com/Spectra456/edifier-m60-controller)** — Thank you for pioneering the Windows USB-C + BLE hardware volume workflow (using `RegisterHotKey` to drive the M60's 0–16 hardware amp while keeping Windows USB digital audio at 100%).
+
+
